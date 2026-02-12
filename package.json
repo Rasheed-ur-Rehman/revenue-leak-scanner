@@ -2,14 +2,14 @@
   "name": "revenue-scanner",
   "private": true,
   "scripts": {
-    "build": "react-router build",
+    "build": "remix build",
     "dev": "shopify app dev",
     "config:link": "shopify app config link",
     "generate": "shopify app generate",
     "deploy": "shopify app deploy",
     "config:use": "shopify app config use",
     "env": "shopify app env",
-    "start": "react-router-serve ./build/server/index.js",
+    "start": "remix-serve ./build/server/index.js",
     "docker-start": "npm run setup && npm run start",
     "setup": "prisma generate && prisma migrate deploy",
     "lint": "eslint --ignore-path .gitignore --cache --cache-location ./node_modules/.cache/eslint .",
@@ -17,27 +17,27 @@
     "prisma": "prisma",
     "graphql-codegen": "graphql-codegen",
     "vite": "vite",
-    "typecheck": "react-router typegen && tsc --noEmit"
+    "typecheck": "remix typegen && tsc --noEmit"
   },
   "type": "module",
   "engines": {
-    "node": ">=20.19 <22 || >=22.12"
+    "node": "20.x"
   },
   "dependencies": {
     "@prisma/client": "^6.16.3",
-    "@react-router/dev": "^7.12.0",
-    "@react-router/fs-routes": "^7.12.0",
-    "@react-router/node": "^7.12.0",
-    "@react-router/serve": "^7.12.0",
+    "@remix-run/dev": "^7.12.0",
+    "@remix-run/fs-routes": "^7.12.0",
+    "@remix-run/node": "^7.12.0",
+    "@remix-run/serve": "^7.12.0",
     "@shopify/app-bridge-react": "^4.2.4",
-    "@shopify/shopify-app-react-router": "^1.1.0",
+    "@shopify/shopify-app-remix": "^1.1.0",
     "@shopify/shopify-app-session-storage-prisma": "^8.0.0",
     "isbot": "^5.1.31",
     "pdfkit": "^0.17.2",
     "prisma": "^6.16.3",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-router": "^7.12.0",
+    "remix": "^7.12.0",
     "vite-tsconfig-paths": "^5.1.4"
   },
   "devDependencies": {
@@ -61,9 +61,6 @@
     "typescript": "^5.9.3",
     "vite": "^6.3.6"
   },
-  "workspaces": [
-    "extensions/*"
-  ],
   "trustedDependencies": [
     "@shopify/plugin-cloudflare"
   ],
