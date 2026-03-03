@@ -1,174 +1,227 @@
 import { useState } from "react";
-import { useFetcher } from "react-router";
 
 /* ---------------- TYPES ---------------- */
-type CartAbandonmentData = {
+type CartAnalytics = {
   totalCarts: number;
-  cartsWithCheckout: number;
-  cartsWithoutCheckout: number;
   abandonedCarts: number;
-  recoveryRate: string;
+  completedCarts: number;
   abandonmentRate: string;
+  completionRate: string;
   potentialRevenue: number;
+  completedRevenue: number;
   recoverableRevenue: number;
-  topAbandonedProducts: {
-    productId: string;
-    productName: string;
-    quantity: number;
-    price: number;
-    totalValue: number;
-    abandonCount: number;
-  }[];
-  recentAbandonedCarts: {
-    cartId: string;
+  abandonedCartsList: {
+    id: string;
     customerEmail: string | null;
-    customerName: string | null;
+    customerFirstName: string | null;
+    customerLastName: string | null;
     isLoggedIn: boolean;
     abandonedAt: string;
     totalPrice: number;
-    itemCount: number;
-    items: {
-      productId: string;
+    lineItems: {
+      productId: string | null;
       productName: string;
       quantity: number;
       price: number;
     }[];
+    lineItemsCount: number;
   }[];
+  completedOrdersList: {
+    id: string;
+    name: string;
+    customerEmail: string | null;
+    customerFirstName: string | null;
+    customerLastName: string | null;
+    isLoggedIn: boolean;
+    processedAt: string;
+    totalPrice: number;
+    lineItems: {
+      productId: string | null;
+      productName: string;
+      quantity: number;
+      price: number;
+    }[];
+    lineItemsCount: number;
+  }[];
+  guestAbandonedCarts: {
+    id: string;
+    customerEmail: string | null;
+    customerFirstName: string | null;
+    customerLastName: string | null;
+    isLoggedIn: boolean;
+    abandonedAt: string;
+    totalPrice: number;
+    lineItems: {
+      productId: string | null;
+      productName: string;
+      quantity: number;
+      price: number;
+    }[];
+    lineItemsCount: number;
+  }[];
+  topAbandonedProducts: {
+    productName: string;
+    abandonCount: number;
+    totalValue: number;
+  }[];
+  productConversions?: {
+    productId: string;
+    productName: string;
+    addedToCart: number;
+    purchased: number;
+    conversionRate: string;
+  }[];
+  missingPages?: {
+    pageType: string;
+    isMissing: boolean;
+    severity: string;
+    recommendation: string;
+  }[];
+  missingProducts?: {
+    productId: string;
+    productName: string;
+    missingImages: boolean;
+    missingDescription: boolean;
+    missingPrice: boolean;
+    missingVariant: boolean;
+  }[];
+  dateRange: {
+    startDate: string;
+    endDate: string;
+  };
 };
 
-type CheckoutFunnelData = {
+type CheckoutFunnel = {
   totalCheckoutStarts: number;
   checkoutsCompleted: number;
   checkoutsAbandoned: number;
   completionRate: string;
   abandonmentRate: string;
-  purchasesAfterCheckout: number;
+  averageOrderValue: number;
   purchasesAfterReminder: number;
   conversionRate: string;
-  averageOrderValue: number;
-  checkoutSteps: {
-    step: string;
-    entered: number;
-    completed: number;
-    dropoffRate: string;
-  }[];
-  dailyFunnel: {
-    date: string;
-    started: number;
-    completed: number;
-    abandoned: number;
-  }[];
-};
-
-type EmailReminderResult = {
-  success: boolean;
-  message: string;
-  sentTo: string;
-  cartId: string;
-  discountCode?: string;
-  discountValue?: string;
+  purchasesAfterCheckout?: number;
+  checkoutSteps?: any[];
+  dailyFunnel?: any[];
 };
 
 type Props = {
-  cartAnalytics: CartAbandonmentData;
-  checkoutFunnel: CheckoutFunnelData;
+  cartAnalytics: CartAnalytics;
+  checkoutFunnel: CheckoutFunnel;
 };
 
-/* ---------------- CART ABANDONMENT DASHBOARD ---------------- */
 export function CartAbandonmentDashboard({ cartAnalytics, checkoutFunnel }: Props) {
-  const fetcher = useFetcher();
+  const [activeTab, setActiveTab] = useState<"abandoned" | "completed" | "emails" | "guest" | "funnel">("abandoned");
   const [sendingReminder, setSendingReminder] = useState<string | null>(null);
-  const [reminderResult, setReminderResult] = useState<EmailReminderResult | null>(null);
+  const [reminderResult, setReminderResult] = useState<any>(null);
   const [showDiscountModal, setShowDiscountModal] = useState(false);
   const [selectedCart, setSelectedCart] = useState<any>(null);
   const [discountPercentage, setDiscountPercentage] = useState("15");
-  const [activeTab, setActiveTab] = useState<"carts" | "funnel">("carts");
+  const [reminderMessage, setReminderMessage] = useState(
+    "Hi {name}, we noticed you left some items in your cart. Complete your purchase now and enjoy {discount} off!"
+  );
 
-  // Send reminder email
-  const handleSendReminder = async (cart: any) => {
-    setSendingReminder(cart.cartId);
-    setReminderResult(null);
+  const abandonedCarts = cartAnalytics.abandonedCartsList || [];
+  const completedOrders = cartAnalytics.completedOrdersList || [];
+  const guestCarts = cartAnalytics.guestAbandonedCarts || [];
+  const topProducts = cartAnalytics.topAbandonedProducts || [];
+  const productConversions = cartAnalytics.productConversions || [];
+
+  // Count emails
+  const abandonedWithEmail = abandonedCarts.filter(c => c.customerEmail).length;
+  const completedWithEmail = completedOrders.filter(c => c.customerEmail).length;
+  const guestWithEmail = guestCarts.filter(c => c.customerEmail).length;
+  const totalEmails = abandonedWithEmail + completedWithEmail;
+
+  // Send reminder
+ const handleSendReminder = async (cart: any) => {
+  if (!cart.customerEmail) {
+    alert("This cart has no email address");
+    return;
+  }
+  
+  setSendingReminder(cart.id);
+  setReminderResult(null);
+  
+  const formData = new FormData();
+  formData.append("cartId", cart.id);
+  formData.append("email", cart.customerEmail);
+  formData.append("name", cart.customerFirstName || "Customer");
+  formData.append("total", cart.totalPrice.toString());
+  formData.append("discount", discountPercentage);
+  formData.append("message", reminderMessage);
+  
+  try {
+    console.log("📧 Sending reminder to:", cart.customerEmail);
     
-    const formData = new FormData();
-    formData.append("cartId", cart.cartId);
-    formData.append("email", cart.customerEmail || "");
-    formData.append("name", cart.customerName || "Customer");
-    formData.append("total", cart.totalPrice.toString());
+    // Use the full URL path that matches the index route
+    const response = await fetch(`/app?index&action=send_reminder`, {
+      method: "POST",
+      body: formData
+    });
     
-    try {
-      const response = await fetch(`${window.location.pathname}?action=send_reminder&t=${Date.now()}`, {
-        method: "POST",
-        body: formData
-      });
-      
-      const result = await response.json();
-      setReminderResult(result);
-      
-      setTimeout(() => {
-        setReminderResult(null);
-      }, 5000);
-      
-    } catch (error) {
-      console.error("Failed to send reminder:", error);
-    } finally {
-      setSendingReminder(null);
+    if (!response.ok) {
+      const text = await response.text();
+      console.error("❌ Server response not OK:", response.status, text.substring(0, 200));
+      throw new Error(`Server error: ${response.status}`);
     }
-  };
-
-  // Generate discount code
-  const handleGenerateDiscount = async (cart: any) => {
+    
+    const result = await response.json();
+    console.log("📧 Reminder result:", result);
+    setReminderResult(result);
+    
+    setTimeout(() => setReminderResult(null), 5000);
+    
+  } catch (error) {
+    console.error("❌ Failed to send reminder:", error);
+    setReminderResult({
+      success: false,
+      message: error instanceof Error ? error.message : "Failed to send reminder. Please try again."
+    });
+    setTimeout(() => setReminderResult(null), 5000);
+  } finally {
+    setSendingReminder(null);
+  }
+};
+  // Open discount modal
+  const handleOpenDiscountModal = (cart: any) => {
     setSelectedCart(cart);
     setShowDiscountModal(true);
   };
 
-  const handleCreateDiscount = async () => {
+  // Generate and send with discount
+  const handleSendWithDiscount = async () => {
     if (!selectedCart) return;
     
-    const formData = new FormData();
-    formData.append("cartId", selectedCart.cartId);
-    formData.append("discount", discountPercentage);
-    
-    try {
-      const response = await fetch(`${window.location.pathname}?action=generate_discount&t=${Date.now()}`, {
-        method: "POST",
-        body: formData
-      });
-      
-      const result = await response.json();
-      
-      if (result.success) {
-        alert(`✅ Discount code created: ${result.discountCode}\nValue: ${result.discountValue}\nExpires: ${result.expiresAt}`);
-        setShowDiscountModal(false);
-        setSelectedCart(null);
-      }
-      
-    } catch (error) {
-      console.error("Failed to create discount:", error);
-    }
+    setShowDiscountModal(false);
+    await handleSendReminder(selectedCart);
   };
 
-  // If no abandoned carts, show empty state
-  const hasAbandonedCarts = cartAnalytics.abandonedCarts > 0 && cartAnalytics.recentAbandonedCarts.length > 0;
-
   return (
-    <div style={{ marginBottom: '2rem' }}>
-      {/* Success Message */}
-      {reminderResult && reminderResult.success && (
+    <div>
+      {/* Success/Error Message */}
+      {reminderResult && (
         <div style={{ 
           position: 'fixed', 
-          top: '20px', 
-          right: '20px', 
-          background: '#EFF7F5', 
-          border: '1px solid #50B83C', 
+          top: 20, 
+          right: 20, 
+          background: reminderResult.success ? '#EFF7F5' : '#FFF4F4',
+          padding: '1rem 2rem', 
           borderRadius: '8px', 
-          padding: '1rem 2rem',
+          border: reminderResult.success ? '1px solid #50B83C' : '1px solid #D82C0D',
           boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
           zIndex: 1000
         }}>
-          <p style={{ color: '#006E52', fontWeight: '600' }}>✅ {reminderResult.message}</p>
+          <p style={{ 
+            color: reminderResult.success ? '#006E52' : '#D82C0D', 
+            fontWeight: '600',
+            marginBottom: reminderResult.discountCode ? '0.5rem' : 0
+          }}>
+            {reminderResult.success ? '✅' : '❌'} {reminderResult.message}
+          </p>
           {reminderResult.discountCode && (
-            <p style={{ fontSize: '0.9rem', marginTop: '0.5rem' }}>
-              Discount: <strong style={{ color: '#008060' }}>{reminderResult.discountCode}</strong> ({reminderResult.discountValue})
+            <p style={{ fontSize: '0.9rem', color: '#008060' }}>
+              Discount code: <strong>{reminderResult.discountCode}</strong> ({reminderResult.discountValue})
             </p>
           )}
         </div>
@@ -190,20 +243,27 @@ export function CartAbandonmentDashboard({ cartAnalytics, checkoutFunnel }: Prop
         }}>
           <div style={{
             background: 'white',
-            borderRadius: '12px',
+            borderRadius: '16px',
             padding: '2rem',
-            maxWidth: '400px',
-            width: '90%'
+            maxWidth: '500px',
+            width: '90%',
+            maxHeight: '80vh',
+            overflow: 'auto'
           }}>
-            <h3 style={{ fontSize: '1.25rem', fontWeight: '600', marginBottom: '1rem' }}>
-              🎁 Create Discount Code
+            <h3 style={{ fontSize: '1.5rem', fontWeight: '600', marginBottom: '1.5rem', color: '#008060' }}>
+              🎁 Send Reminder with Discount
             </h3>
-            <p style={{ marginBottom: '1rem', color: '#5C5F62' }}>
-              For: {selectedCart.customerName || 'Guest Customer'}
-            </p>
+            
             <div style={{ marginBottom: '1.5rem' }}>
-              <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.9rem', fontWeight: '500' }}>
-                Discount Percentage
+              <p style={{ fontWeight: '600', marginBottom: '0.5rem' }}>Customer:</p>
+              <p>{selectedCart.customerFirstName || 'Customer'} {selectedCart.customerLastName}</p>
+              <p style={{ color: '#008060' }}>{selectedCart.customerEmail}</p>
+              <p>Cart Value: <strong>${selectedCart.totalPrice.toFixed(2)}</strong></p>
+            </div>
+
+            <div style={{ marginBottom: '1.5rem' }}>
+              <label style={{ display: 'block', fontWeight: '600', marginBottom: '0.5rem' }}>
+                Discount Percentage:
               </label>
               <select
                 value={discountPercentage}
@@ -212,7 +272,7 @@ export function CartAbandonmentDashboard({ cartAnalytics, checkoutFunnel }: Prop
                   width: '100%',
                   padding: '0.75rem',
                   border: '1px solid #8A9199',
-                  borderRadius: '6px',
+                  borderRadius: '8px',
                   fontSize: '1rem'
                 }}
               >
@@ -223,6 +283,42 @@ export function CartAbandonmentDashboard({ cartAnalytics, checkoutFunnel }: Prop
                 <option value="30">30% OFF</option>
               </select>
             </div>
+
+            <div style={{ marginBottom: '1.5rem' }}>
+              <label style={{ display: 'block', fontWeight: '600', marginBottom: '0.5rem' }}>
+                Reminder Message:
+              </label>
+              <textarea
+                value={reminderMessage}
+                onChange={(e) => setReminderMessage(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '0.75rem',
+                  border: '1px solid #8A9199',
+                  borderRadius: '8px',
+                  fontSize: '0.95rem',
+                  minHeight: '100px'
+                }}
+              />
+              <p style={{ fontSize: '0.8rem', color: '#5C5F62', marginTop: '0.25rem' }}>
+                Use {'{name}'} for customer name and {'{discount}'} for discount code
+              </p>
+            </div>
+
+            <div style={{ 
+              background: '#F6F6F7', 
+              padding: '1rem', 
+              borderRadius: '8px', 
+              marginBottom: '1.5rem' 
+            }}>
+              <p style={{ fontWeight: '600', marginBottom: '0.5rem' }}>Preview:</p>
+              <p style={{ fontSize: '0.9rem' }}>
+                {reminderMessage
+                  .replace('{name}', selectedCart.customerFirstName || 'Customer')
+                  .replace('{discount}', `${discountPercentage}% off`)}
+              </p>
+            </div>
+
             <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
               <button
                 onClick={() => {
@@ -232,25 +328,29 @@ export function CartAbandonmentDashboard({ cartAnalytics, checkoutFunnel }: Prop
                 style={{
                   padding: '0.75rem 1.5rem',
                   background: 'white',
+                  color: '#212B36',
                   border: '1px solid #8A9199',
-                  borderRadius: '6px',
+                  borderRadius: '8px',
+                  fontSize: '1rem',
                   cursor: 'pointer'
                 }}
               >
                 Cancel
               </button>
               <button
-                onClick={handleCreateDiscount}
+                onClick={handleSendWithDiscount}
                 style={{
                   padding: '0.75rem 1.5rem',
                   background: '#008060',
                   color: 'white',
                   border: 'none',
-                  borderRadius: '6px',
+                  borderRadius: '8px',
+                  fontSize: '1rem',
+                  fontWeight: '600',
                   cursor: 'pointer'
                 }}
               >
-                Create Discount
+                Send Reminder
               </button>
             </div>
           </div>
@@ -258,402 +358,501 @@ export function CartAbandonmentDashboard({ cartAnalytics, checkoutFunnel }: Prop
       )}
 
       {/* Tabs */}
-      <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem' }}>
-        <button
-          onClick={() => setActiveTab("carts")}
-          style={{
-            padding: '0.75rem 1.5rem',
-            background: activeTab === "carts" ? '#008060' : 'white',
-            color: activeTab === "carts" ? 'white' : '#212B36',
-            border: activeTab === "carts" ? 'none' : '1px solid #8A9199',
-            borderRadius: '30px',
-            fontSize: '0.95rem',
-            fontWeight: '500',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.5rem'
-          }}
-        >
-          🛒 Cart Abandonment {cartAnalytics.abandonedCarts > 0 && `(${cartAnalytics.abandonedCarts})`}
-        </button>
-        <button
-          onClick={() => setActiveTab("funnel")}
-          style={{
-            padding: '0.75rem 1.5rem',
-            background: activeTab === "funnel" ? '#008060' : 'white',
-            color: activeTab === "funnel" ? 'white' : '#212B36',
-            border: activeTab === "funnel" ? 'none' : '1px solid #8A9199',
-            borderRadius: '30px',
-            fontSize: '0.95rem',
-            fontWeight: '500',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.5rem'
-          }}
-        >
-          📊 Checkout Funnel {checkoutFunnel.checkoutsAbandoned > 0 && `(${checkoutFunnel.checkoutsAbandoned})`}
-        </button>
+      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '2rem', flexWrap: 'wrap' }}>
+        <TabButton active={activeTab === "abandoned"} onClick={() => setActiveTab("abandoned")}>
+          🛒 Abandoned ({abandonedCarts.length})
+        </TabButton>
+        {/* <TabButton active={activeTab === "guest"} onClick={() => setActiveTab("guest")}>
+          👤 Guest User({guestCarts.length})
+        </TabButton> */}
+        <TabButton active={activeTab === "completed"} onClick={() => setActiveTab("completed")}>
+          ✅ Completed ({completedOrders.length})
+        </TabButton>
+        <TabButton active={activeTab === "emails"} onClick={() => setActiveTab("emails")}>
+          📧 Login User ({totalEmails})
+        </TabButton>
+        <TabButton active={activeTab === "funnel"} onClick={() => setActiveTab("funnel")}>
+          📊 Funnel
+        </TabButton>
       </div>
 
-      {/* CART ABANDONMENT TAB */}
-      {activeTab === "carts" && (
-        <div style={{ 
-          background: 'white', 
-          borderRadius: '16px', 
-          border: '1px solid #E4E5E7', 
-          padding: '2rem'
-        }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-            <h2 style={{ fontSize: '1.5rem', fontWeight: '600' }}>🛒 Cart Abandonment Recovery</h2>
-            <span style={{ 
-              padding: '0.5rem 1rem', 
-              background: parseFloat(cartAnalytics.abandonmentRate) > 50 ? '#FFF4F4' : '#EFF7F5',
-              borderRadius: '20px',
-              fontSize: '0.9rem',
-              fontWeight: '600',
-              color: parseFloat(cartAnalytics.abandonmentRate) > 50 ? '#D82C0D' : '#006E52'
-            }}>
-              Abandonment Rate: {cartAnalytics.abandonmentRate || '0%'}
-            </span>
-          </div>
+      {/* EMAILS TAB */}
+      {activeTab === "emails" && (
+        <div style={{ background: 'white', borderRadius: '16px', border: '1px solid #E4E5E7', padding: '2rem' }}>
+          <h2 style={{ fontSize: '1.5rem', marginBottom: '1.5rem' }}>📧 Customer</h2>
           
-          {/* Cart Stats Grid */}
-          <div style={{ 
-            display: 'grid', 
-            gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', 
-            gap: '1rem', 
-            marginBottom: '2rem' 
-          }}>
-            <div style={{ padding: '1.25rem', background: '#F6F6F7', borderRadius: '12px' }}>
-              <p style={{ fontSize: '0.8rem', color: '#5C5F62', marginBottom: '0.25rem' }}>Total Checkouts</p>
-              <p style={{ fontSize: '1.75rem', fontWeight: '600' }}>{cartAnalytics.totalCarts || 0}</p>
-              <p style={{ fontSize: '0.8rem', color: '#5C5F62' }}>
-                {cartAnalytics.cartsWithCheckout || 0} completed • {cartAnalytics.cartsWithoutCheckout || 0} abandoned
-              </p>
-            </div>
-            
-            <div style={{ padding: '1.25rem', background: '#F6F6F7', borderRadius: '12px' }}>
-              <p style={{ fontSize: '0.8rem', color: '#5C5F62', marginBottom: '0.25rem' }}>Abandoned Revenue</p>
-              <p style={{ fontSize: '1.75rem', fontWeight: '600', color: cartAnalytics.potentialRevenue > 0 ? '#D82C0D' : '#5C5F62' }}>
-                ${cartAnalytics.potentialRevenue.toLocaleString() || 0}
-              </p>
-              <p style={{ fontSize: '0.8rem', color: '#5C5F62' }}>
-                💰 ${cartAnalytics.recoverableRevenue.toLocaleString() || 0} recoverable
-              </p>
-            </div>
-            
-            <div style={{ padding: '1.25rem', background: '#F6F6F7', borderRadius: '12px' }}>
-              <p style={{ fontSize: '0.8rem', color: '#5C5F62', marginBottom: '0.25rem' }}>Recovery Rate</p>
-              <p style={{ fontSize: '1.75rem', fontWeight: '600' }}>{cartAnalytics.recoveryRate || '0%'}</p>
-              <p style={{ fontSize: '0.8rem', color: '#5C5F62' }}>
-                Industry avg: 15-20%
-              </p>
-            </div>
-            
-            <div style={{ padding: '1.25rem', background: '#F6F6F7', borderRadius: '12px' }}>
-              <p style={{ fontSize: '0.8rem', color: '#5C5F62', marginBottom: '0.25rem' }}>Recoverable Customers</p>
-              <p style={{ fontSize: '1.75rem', fontWeight: '600' }}>
-                {cartAnalytics.recentAbandonedCarts.filter(c => c.isLoggedIn).length || 0}
-              </p>
-              <p style={{ fontSize: '0.8rem', color: '#5C5F62' }}>
-                {cartAnalytics.recentAbandonedCarts.filter(c => c.isLoggedIn).length > 0 
-                  ? 'Ready for email reminders' 
-                  : 'No email addresses available'}
-              </p>
-            </div>
-          </div>
-          
-          {/* Top Abandoned Products */}
-          {cartAnalytics.topAbandonedProducts.length > 0 && (
+          {/* Abandoned Cart Emails */}
+          {abandonedWithEmail > 0 && (
             <div style={{ marginBottom: '2rem' }}>
-              <h3 style={{ fontSize: '1.1rem', fontWeight: '600', marginBottom: '1rem' }}>
-                📦 Most Abandoned Products
+              <h3 style={{ color: '#D82C0D', marginBottom: '1rem' }}>
+                🛒 Abandoned Checkouts ({abandonedWithEmail})
               </h3>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                {cartAnalytics.topAbandonedProducts.map((product, idx) => (
-                  <div key={idx} style={{ 
-                    display: 'flex', 
-                    justifyContent: 'space-between', 
+              {abandonedCarts
+                .filter(c => c.customerEmail)
+                .map((cart, i) => (
+                  <div key={i} style={{ 
+                    display: 'flex',
+                    justifyContent: 'space-between',
                     alignItems: 'center',
-                    padding: '0.75rem',
-                    background: '#F6F6F7',
-                    borderRadius: '8px'
+                    padding: '1rem',
+                    background: '#FFF4F4',
+                    borderRadius: '8px',
+                    marginBottom: '0.75rem',
+                    border: '1px solid #E0B3B2'
                   }}>
-                    <div>
-                      <p style={{ fontWeight: '500' }}>{product.productName}</p>
-                      <p style={{ fontSize: '0.8rem', color: '#5C5F62' }}>
-                        Abandoned {product.abandonCount} times • {product.quantity} units
+                    <div style={{ flex: 1 }}>
+                      <p style={{ fontWeight: '600' }}>
+                        {cart.customerFirstName || cart.customerLastName ? 
+                          `${cart.customerFirstName || ''} ${cart.customerLastName || ''}`.trim() : 
+                          'Customer'}
+                      </p>
+                      <p style={{ color: '#008060' }}>📧 {cart.customerEmail}</p>
+                      <p style={{ fontSize: '0.9rem', color: '#5C5F62' }}>
+                        ${cart.totalPrice.toFixed(2)} • {cart.lineItemsCount} items • {new Date(cart.abandonedAt).toLocaleDateString()}
                       </p>
                     </div>
-                    <div style={{ textAlign: 'right' }}>
-                      <p style={{ fontWeight: '600', color: '#D82C0D' }}>
-                        ${Math.round(product.totalValue).toLocaleString()}
-                      </p>
-                      <p style={{ fontSize: '0.8rem', color: '#5C5F62' }}>
-                        ${Math.round(product.price)} each
-                      </p>
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                      <button
+                        onClick={() => handleOpenDiscountModal(cart)}
+                        disabled={sendingReminder === cart.id}
+                        style={{
+                          padding: '0.75rem 1.5rem',
+                          background: 'white',
+                          color: '#008060',
+                          border: '1px solid #008060',
+                          borderRadius: '30px',
+                          fontSize: '0.9rem',
+                          fontWeight: '600',
+                          cursor: sendingReminder === cart.id ? 'not-allowed' : 'pointer'
+                        }}
+                      >
+                        🎁 Add Discount
+                      </button>
+                      <button
+                        onClick={() => handleSendReminder(cart)}
+                        disabled={sendingReminder === cart.id}
+                        style={{
+                          padding: '0.75rem 1.5rem',
+                          background: sendingReminder === cart.id ? '#8A9199' : '#008060',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '30px',
+                          fontSize: '0.9rem',
+                          fontWeight: '600',
+                          cursor: sendingReminder === cart.id ? 'not-allowed' : 'pointer'
+                        }}
+                      >
+                        {sendingReminder === cart.id ? '⏳ Sending...' : '✉️ Send Reminder'}
+                      </button>
                     </div>
                   </div>
                 ))}
-              </div>
             </div>
           )}
-          
-          {/* Recent Abandoned Carts - Recovery Actions */}
-          {cartAnalytics.recentAbandonedCarts.length > 0 ? (
+
+          {/* Completed Order Emails */}
+          {completedWithEmail > 0 && (
             <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                <h3 style={{ fontSize: '1.1rem', fontWeight: '600' }}>
-                  🕐 Recent Abandoned Checkouts
-                </h3>
-                <span style={{ fontSize: '0.8rem', color: '#5C5F62' }}>
-                  {cartAnalytics.recentAbandonedCarts.filter(c => c.customerEmail).length} with email
-                </span>
-              </div>
-              
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                {cartAnalytics.recentAbandonedCarts.slice(0, 5).map((cart, idx) => (
-                  <div key={idx} style={{ 
+              <h3 style={{ color: '#008060', marginBottom: '1rem' }}>
+                ✅ Completed Orders ({completedWithEmail})
+              </h3>
+              {completedOrders
+                .filter(c => c.customerEmail)
+                .map((order, i) => (
+                  <div key={i} style={{ 
                     padding: '1rem',
-                    background: cart.isLoggedIn ? '#EFF7F5' : '#F6F6F7',
+                    background: '#F6F6F7',
                     borderRadius: '8px',
-                    border: cart.isLoggedIn ? '1px solid #50B83C' : '1px solid #E4E5E7'
+                    marginBottom: '0.75rem',
+                    border: '1px solid #E4E5E7'
                   }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap' }}>
-                      <div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
-                          <span style={{ fontWeight: '600' }}>
-                            {cart.customerName || 'Guest Customer'}
-                          </span>
-                          {cart.isLoggedIn && (
-                            <span style={{ 
-                              padding: '0.25rem 0.75rem', 
-                              background: '#50B83C', 
-                              color: 'white', 
-                              borderRadius: '12px',
-                              fontSize: '0.7rem',
-                              fontWeight: '600'
-                            }}>
-                              LOGGED IN
-                            </span>
-                          )}
-                          {cart.customerEmail && (
-                            <span style={{ 
-                              padding: '0.25rem 0.75rem', 
-                              background: '#008060', 
-                              color: 'white', 
-                              borderRadius: '12px',
-                              fontSize: '0.7rem',
-                              fontWeight: '600'
-                            }}>
-                              HAS EMAIL
-                            </span>
-                          )}
-                        </div>
-                        
-                        {cart.customerEmail && (
-                          <p style={{ fontSize: '0.8rem', color: '#5C5F62', marginBottom: '0.25rem' }}>
-                            📧 {cart.customerEmail}
-                          </p>
-                        )}
-                        
-                        <p style={{ fontSize: '0.8rem', color: '#5C5F62' }}>
-                          Abandoned: {new Date(cart.abandonedAt).toLocaleString()}
-                        </p>
-                        
-                        <div style={{ marginTop: '0.5rem' }}>
-                          <p style={{ fontSize: '0.8rem', fontWeight: '500', marginBottom: '0.25rem' }}>
-                            Items ({cart.itemCount}):
-                          </p>
-                          {cart.items.slice(0, 2).map((item, itemIdx) => (
-                            <p key={itemIdx} style={{ fontSize: '0.75rem', color: '#5C5F62' }}>
-                              • {item.quantity}x {item.productName} (${Math.round(item.price * item.quantity)})
-                            </p>
-                          ))}
-                          {cart.items.length > 2 && (
-                            <p style={{ fontSize: '0.75rem', color: '#5C5F62' }}>
-                              • ...and {cart.items.length - 2} more items
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                      
-                      <div style={{ textAlign: 'right' }}>
-                        <p style={{ fontSize: '1.25rem', fontWeight: '700', color: '#D82C0D', marginBottom: '0.5rem' }}>
-                          ${Math.round(cart.totalPrice).toLocaleString()}
-                        </p>
-                        
-                        {cart.customerEmail && (
-                          <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
-                            <button
-                              onClick={() => handleSendReminder(cart)}
-                              disabled={sendingReminder === cart.cartId}
-                              style={{
-                                padding: '0.5rem 1rem',
-                                background: sendingReminder === cart.cartId ? '#8A9199' : '#008060',
-                                color: 'white',
-                                border: 'none',
-                                borderRadius: '6px',
-                                fontSize: '0.8rem',
-                                fontWeight: '500',
-                                cursor: sendingReminder === cart.cartId ? 'not-allowed' : 'pointer',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '0.25rem'
-                              }}
-                            >
-                              {sendingReminder === cart.cartId ? '⏳ Sending...' : '✉️ Send Reminder'}
-                            </button>
-                            
-                            <button
-                              onClick={() => handleGenerateDiscount(cart)}
-                              style={{
-                                padding: '0.5rem 1rem',
-                                background: 'white',
-                                color: '#008060',
-                                border: '1px solid #008060',
-                                borderRadius: '6px',
-                                fontSize: '0.8rem',
-                                fontWeight: '500',
-                                cursor: 'pointer',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '0.25rem'
-                              }}
-                            >
-                              🎁 Add Discount
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    </div>
+                    <p style={{ fontWeight: '600' }}>
+                      {order.customerFirstName || order.customerLastName ? 
+                        `${order.customerFirstName || ''} ${order.customerLastName || ''}`.trim() : 
+                        'Customer'}
+                    </p>
+                    <p style={{ color: '#008060' }}>📧 {order.customerEmail}</p>
+                    <p style={{ fontSize: '0.9rem', color: '#5C5F62' }}>
+                      Order #{order.name} • ${order.totalPrice.toFixed(2)} • {new Date(order.processedAt).toLocaleDateString()}
+                    </p>
                   </div>
                 ))}
-              </div>
             </div>
-          ) : (
-            <div style={{ 
-              padding: '3rem', 
-              background: '#F6F6F7', 
-              borderRadius: '12px', 
-              textAlign: 'center' 
-            }}>
-              <span style={{ fontSize: '3rem', marginBottom: '1rem', display: 'block' }}>🛒</span>
-              <h3 style={{ fontSize: '1.25rem', fontWeight: '600', color: '#5C5F62', marginBottom: '0.5rem' }}>
-                No Abandoned Checkouts Found
-              </h3>
-              <p style={{ color: '#8A9199' }}>
-                When customers start checkout but don't complete it, they'll appear here for recovery.
-              </p>
+          )}
+
+          {totalEmails === 0 && (
+            <div style={{ textAlign: 'center', padding: '3rem', color: '#5C5F62' }}>
+              <p>No customer emails found in the selected date range</p>
             </div>
           )}
         </div>
       )}
 
-      {/* CHECKOUT FUNNEL TAB */}
-      {activeTab === "funnel" && (
-        <div style={{ 
-          background: 'white', 
-          borderRadius: '16px', 
-          border: '1px solid #E4E5E7', 
-          padding: '2rem'
-        }}>
+      {/* GUEST ABANDONED CARTS TAB */}
+      {activeTab === "guest" && (
+        <div style={{ background: 'white', borderRadius: '16px', border: '1px solid #E4E5E7', padding: '2rem' }}>
+          <h2 style={{ fontSize: '1.5rem', marginBottom: '1.5rem' }}>👤 Guest Abandoned Carts</h2>
+          
+          {guestCarts.length > 0 ? (
+            <>
+              <div style={{ 
+                display: 'grid', 
+                gridTemplateColumns: 'repeat(3, 1fr)', 
+                gap: '1rem', 
+                marginBottom: '2rem' 
+              }}>
+                <StatCard label="Total Guest Carts" value={guestCarts.length} />
+                <StatCard label="With Email" value={guestWithEmail} color="#008060" />
+                <StatCard label="Lost Revenue" value={`$${guestCarts.reduce((sum, c) => sum + c.totalPrice, 0).toLocaleString()}`} color="#D82C0D" />
+              </div>
+
+              {guestCarts.map((cart, i) => (
+                <div key={i} style={{ 
+                  padding: '1rem',
+                  background: '#F6F6F7',
+                  borderRadius: '8px',
+                  marginBottom: '1rem',
+                  border: '1px solid #E4E5E7'
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                    <div>
+                      <span style={{ fontWeight: '600' }}>
+                        Guest Customer
+                      </span>
+                    </div>
+                    <span style={{ fontWeight: '700', color: '#D82C0D' }}>${cart.totalPrice.toFixed(2)}</span>
+                  </div>
+                  
+                  {cart.customerEmail && <p style={{ color: '#008060', marginBottom: '0.25rem' }}>📧 {cart.customerEmail}</p>}
+                  
+                  <p style={{ fontSize: '0.9rem', color: '#5C5F62', marginBottom: '0.5rem' }}>
+                    {new Date(cart.abandonedAt).toLocaleString()}
+                  </p>
+                  
+                  <details style={{ marginBottom: '0.5rem' }}>
+                    <summary style={{ cursor: 'pointer', color: '#008060' }}>
+                      Items ({cart.lineItemsCount})
+                    </summary>
+                    {cart.lineItems.map((item, idx) => (
+                      <p key={idx} style={{ fontSize: '0.9rem', marginLeft: '1rem', marginTop: '0.25rem' }}>
+                        • {item.quantity}x {item.productName}
+                      </p>
+                    ))}
+                  </details>
+
+                  {cart.customerEmail && (
+                    <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+                      <button
+                        onClick={() => handleOpenDiscountModal(cart)}
+                        disabled={sendingReminder === cart.id}
+                        style={{
+                          padding: '0.5rem 1rem',
+                          background: 'white',
+                          color: '#008060',
+                          border: '1px solid #008060',
+                          borderRadius: '30px',
+                          fontSize: '0.9rem',
+                          fontWeight: '600',
+                          cursor: sendingReminder === cart.id ? 'not-allowed' : 'pointer'
+                        }}
+                      >
+                        🎁 Add Discount
+                      </button>
+                      <button
+                        onClick={() => handleSendReminder(cart)}
+                        disabled={sendingReminder === cart.id}
+                        style={{
+                          padding: '0.5rem 1rem',
+                          background: sendingReminder === cart.id ? '#8A9199' : '#008060',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '30px',
+                          fontSize: '0.9rem',
+                          fontWeight: '600',
+                          cursor: sendingReminder === cart.id ? 'not-allowed' : 'pointer'
+                        }}
+                      >
+                        {sendingReminder === cart.id ? '⏳ Sending...' : '✉️ Send Reminder'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </>
+          ) : (
+            <p style={{ textAlign: 'center', padding: '3rem', color: '#5C5F62' }}>
+              No guest abandoned carts found in the selected date range
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* ABANDONED CARTS TAB */}
+      {activeTab === "abandoned" && (
+        <div style={{ background: 'white', borderRadius: '16px', border: '1px solid #E4E5E7', padding: '2rem' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-            <h2 style={{ fontSize: '1.5rem', fontWeight: '600' }}>📊 Checkout Funnel Analytics</h2>
+            <h2 style={{ fontSize: '1.5rem' }}>🛒 Abandoned Checkouts</h2>
             <span style={{ 
               padding: '0.5rem 1rem', 
-              background: '#EFF7F5',
-              borderRadius: '20px',
-              fontSize: '0.9rem',
-              fontWeight: '600',
-              color: '#006E52'
+              background: '#FFF4F4',
+              borderRadius: '30px',
+              color: '#D82C0D',
+              fontWeight: '600'
             }}>
-              AOV: ${checkoutFunnel.averageOrderValue.toLocaleString() || 0}
+              {cartAnalytics.abandonmentRate} abandonment rate
             </span>
           </div>
           
-          {/* Funnel Stats Grid */}
+          {abandonedCarts.length > 0 ? (
+            <>
+              {/* Stats */}
+              <div style={{ 
+                display: 'grid', 
+                gridTemplateColumns: 'repeat(3, 1fr)', 
+                gap: '1rem', 
+                marginBottom: '2rem' 
+              }}>
+                <StatCard label="Total Abandoned" value={abandonedCarts.length} />
+                <StatCard label="With Email" value={abandonedWithEmail} color="#008060" />
+                <StatCard label="Lost Revenue" value={`$${cartAnalytics.potentialRevenue.toLocaleString()}`} color="#D82C0D" />
+              </div>
+
+              {/* Top Abandoned Products */}
+              {topProducts.length > 0 && (
+                <div style={{ marginBottom: '2rem' }}>
+                  <h3 style={{ fontSize: '1.2rem', marginBottom: '1rem' }}>📦 Most Abandoned Products</h3>
+                  {topProducts.map((product, i) => (
+                    <div key={i} style={{ 
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      padding: '0.75rem',
+                      background: '#F6F6F7',
+                      borderRadius: '8px',
+                      marginBottom: '0.5rem'
+                    }}>
+                      <span>{product.productName}</span>
+                      <span style={{ fontWeight: '600', color: '#D82C0D' }}>
+                        {product.abandonCount}x
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* List of abandoned carts */}
+              <h3 style={{ fontSize: '1.2rem', marginBottom: '1rem' }}>Recent Abandoned Carts</h3>
+              {abandonedCarts.map((cart, i) => (
+                <div key={i} style={{ 
+                  padding: '1rem',
+                  background: cart.isLoggedIn ? '#EFF7F5' : '#F6F6F7',
+                  borderRadius: '8px',
+                  marginBottom: '1rem',
+                  border: cart.isLoggedIn ? '1px solid #50B83C' : '1px solid #E4E5E7'
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                    <div>
+                      <span style={{ fontWeight: '600' }}>
+                        {cart.customerFirstName || cart.customerLastName ? 
+                          `${cart.customerFirstName || ''} ${cart.customerLastName || ''}`.trim() : 
+                          'Guest Customer'}
+                      </span>
+                      {cart.isLoggedIn && <span style={{ marginLeft: '0.5rem', color: '#50B83C' }}>🔐 Logged in</span>}
+                    </div>
+                    <span style={{ fontWeight: '700', color: '#D82C0D' }}>${cart.totalPrice.toFixed(2)}</span>
+                  </div>
+                  
+                  {cart.customerEmail && <p style={{ color: '#008060', marginBottom: '0.25rem' }}>📧 {cart.customerEmail}</p>}
+                  
+                  <p style={{ fontSize: '0.9rem', color: '#5C5F62', marginBottom: '0.5rem' }}>
+                    {new Date(cart.abandonedAt).toLocaleString()}
+                  </p>
+                  
+                  <details style={{ marginBottom: '0.5rem' }}>
+                    <summary style={{ cursor: 'pointer', color: '#008060' }}>
+                      Items ({cart.lineItemsCount})
+                    </summary>
+                    {cart.lineItems.map((item, idx) => (
+                      <p key={idx} style={{ fontSize: '0.9rem', marginLeft: '1rem', marginTop: '0.25rem' }}>
+                        • {item.quantity}x {item.productName}
+                      </p>
+                    ))}
+                  </details>
+
+                  {cart.customerEmail && (
+                    <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+                      <button
+                        onClick={() => handleOpenDiscountModal(cart)}
+                        disabled={sendingReminder === cart.id}
+                        style={{
+                          padding: '0.5rem 1rem',
+                          background: 'white',
+                          color: '#008060',
+                          border: '1px solid #008060',
+                          borderRadius: '30px',
+                          fontSize: '0.9rem',
+                          fontWeight: '600',
+                          cursor: sendingReminder === cart.id ? 'not-allowed' : 'pointer'
+                        }}
+                      >
+                        🎁 Add Discount
+                      </button>
+                      <button
+                        onClick={() => handleSendReminder(cart)}
+                        disabled={sendingReminder === cart.id}
+                        style={{
+                          padding: '0.5rem 1rem',
+                          background: sendingReminder === cart.id ? '#8A9199' : '#008060',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '30px',
+                          fontSize: '0.9rem',
+                          fontWeight: '600',
+                          cursor: sendingReminder === cart.id ? 'not-allowed' : 'pointer'
+                        }}
+                      >
+                        {sendingReminder === cart.id ? '⏳ Sending...' : '✉️ Send Reminder'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </>
+          ) : (
+            <p style={{ textAlign: 'center', padding: '3rem', color: '#5C5F62' }}>
+              No abandoned checkouts found in the selected date range
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* COMPLETED ORDERS TAB */}
+      {activeTab === "completed" && (
+        <div style={{ background: 'white', borderRadius: '16px', border: '1px solid #E4E5E7', padding: '2rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+            <h2 style={{ fontSize: '1.5rem' }}>✅ Completed Orders</h2>
+            <span style={{ 
+              padding: '0.5rem 1rem', 
+              background: '#EFF7F5',
+              borderRadius: '30px',
+              color: '#006E52',
+              fontWeight: '600'
+            }}>
+              ${cartAnalytics.completedRevenue.toLocaleString()} revenue
+            </span>
+          </div>
+          
+          {completedOrders.length > 0 ? (
+            <>
+              {/* Stats */}
+              <div style={{ 
+                display: 'grid', 
+                gridTemplateColumns: 'repeat(3, 1fr)', 
+                gap: '1rem', 
+                marginBottom: '2rem' 
+              }}>
+                <StatCard label="Total Orders" value={completedOrders.length} />
+                <StatCard label="With Email" value={completedWithEmail} color="#008060" />
+                <StatCard label="Avg Order Value" value={`$${checkoutFunnel.averageOrderValue.toFixed(2)}`} />
+              </div>
+
+              {/* List of completed orders */}
+              {completedOrders.map((order, i) => (
+                <div key={i} style={{ 
+                  padding: '1rem',
+                  background: '#F6F6F7',
+                  borderRadius: '8px',
+                  marginBottom: '1rem',
+                  border: '1px solid #E4E5E7'
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+                    <div>
+                      <span style={{ fontWeight: '600' }}>
+                        {order.customerFirstName || order.customerLastName ? 
+                          `${order.customerFirstName || ''} ${order.customerLastName || ''}`.trim() : 
+                          'Customer'}
+                      </span>
+                      <span style={{ marginLeft: '0.5rem', color: '#008060' }}>Order #{order.name}</span>
+                    </div>
+                    <span style={{ fontWeight: '700', color: '#008060' }}>${order.totalPrice.toFixed(2)}</span>
+                  </div>
+                  
+                  {order.customerEmail && <p style={{ color: '#008060', marginBottom: '0.25rem' }}>📧 {order.customerEmail}</p>}
+                  
+                  <p style={{ fontSize: '0.9rem', color: '#5C5F62', marginBottom: '0.5rem' }}>
+                    {new Date(order.processedAt).toLocaleString()}
+                  </p>
+                  
+                  <details>
+                    <summary style={{ cursor: 'pointer', color: '#008060' }}>
+                      Items ({order.lineItemsCount})
+                    </summary>
+                    {order.lineItems.map((item, idx) => (
+                      <p key={idx} style={{ fontSize: '0.9rem', marginLeft: '1rem', marginTop: '0.25rem' }}>
+                        • {item.quantity}x {item.productName} (${(item.price * item.quantity).toFixed(2)})
+                      </p>
+                    ))}
+                  </details>
+                </div>
+              ))}
+            </>
+          ) : (
+            <p style={{ textAlign: 'center', padding: '3rem', color: '#5C5F62' }}>
+              No completed orders found in the selected date range
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* FUNNEL TAB */}
+      {activeTab === "funnel" && (
+        <div style={{ background: 'white', borderRadius: '16px', border: '1px solid #E4E5E7', padding: '2rem' }}>
+          <h2 style={{ fontSize: '1.5rem', marginBottom: '1.5rem' }}>📊 Checkout Funnel</h2>
+          
           <div style={{ 
             display: 'grid', 
-            gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', 
+            gridTemplateColumns: 'repeat(4, 1fr)', 
             gap: '1rem', 
             marginBottom: '2rem' 
           }}>
-            <div style={{ padding: '1.25rem', background: '#F6F6F7', borderRadius: '12px' }}>
-              <p style={{ fontSize: '0.8rem', color: '#5C5F62', marginBottom: '0.25rem' }}>Checkout Started</p>
-              <p style={{ fontSize: '1.75rem', fontWeight: '600' }}>{checkoutFunnel.totalCheckoutStarts || 0}</p>
-            </div>
-            
-            <div style={{ padding: '1.25rem', background: '#F6F6F7', borderRadius: '12px' }}>
-              <p style={{ fontSize: '0.8rem', color: '#5C5F62', marginBottom: '0.25rem' }}>Completed</p>
-              <p style={{ fontSize: '1.75rem', fontWeight: '600', color: checkoutFunnel.checkoutsCompleted > 0 ? '#50B83C' : '#5C5F62' }}>
-                {checkoutFunnel.checkoutsCompleted || 0}
-              </p>
-            </div>
-            
-            <div style={{ padding: '1.25rem', background: '#F6F6F7', borderRadius: '12px' }}>
-              <p style={{ fontSize: '0.8rem', color: '#5C5F62', marginBottom: '0.25rem' }}>Abandoned</p>
-              <p style={{ fontSize: '1.75rem', fontWeight: '600', color: checkoutFunnel.checkoutsAbandoned > 0 ? '#D82C0D' : '#5C5F62' }}>
-                {checkoutFunnel.checkoutsAbandoned || 0}
-              </p>
-            </div>
-            
-            <div style={{ padding: '1.25rem', background: '#F6F6F7', borderRadius: '12px' }}>
-              <p style={{ fontSize: '0.8rem', color: '#5C5F62', marginBottom: '0.25rem' }}>Conversion Rate</p>
-              <p style={{ fontSize: '1.75rem', fontWeight: '600' }}>
-                {checkoutFunnel.completionRate || '0%'}
-              </p>
-            </div>
+            <StatCard label="Started" value={checkoutFunnel.totalCheckoutStarts} />
+            <StatCard label="Completed" value={checkoutFunnel.checkoutsCompleted} color="#008060" />
+            <StatCard label="Abandoned" value={checkoutFunnel.checkoutsAbandoned} color="#D82C0D" />
+            <StatCard label="Completion Rate" value={checkoutFunnel.completionRate} />
           </div>
-          
-          {/* Checkout Steps Drop-off */}
-          {checkoutFunnel.totalCheckoutStarts > 0 ? (
-            <div style={{ marginBottom: '2rem' }}>
-              <h3 style={{ fontSize: '1.1rem', fontWeight: '600', marginBottom: '1rem' }}>
-                🚶 Where Customers Leave
-              </h3>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                {checkoutFunnel.checkoutSteps.map((step, idx) => (
-                  <div key={idx}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
-                      <span style={{ fontWeight: '500' }}>{step.step}</span>
-                      <span style={{ color: step.dropoffRate.includes('0%') ? '#50B83C' : '#D82C0D', fontWeight: '600' }}>
-                        {step.completed} / {step.entered} ({step.dropoffRate} drop-off)
-                      </span>
-                    </div>
-                    <div style={{ height: '8px', background: '#E4E5E7', borderRadius: '4px' }}>
-                      <div style={{ 
-                        width: `${(step.completed / step.entered) * 100}%`, 
-                        height: '100%', 
-                        background: step.dropoffRate.includes('0%') ? '#50B83C' : '#008060', 
-                        borderRadius: '4px' 
-                      }} />
-                    </div>
-                  </div>
-                ))}
+
+          {/* Simple funnel visualization */}
+          <div style={{ marginBottom: '2rem' }}>
+            <div style={{ marginBottom: '1rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
+                <span>Started Checkout</span>
+                <span>{checkoutFunnel.totalCheckoutStarts}</span>
+              </div>
+              <div style={{ height: '20px', background: '#E4E5E7', borderRadius: '10px' }}>
+                <div style={{ width: '100%', height: '100%', background: '#008060', borderRadius: '10px' }} />
               </div>
             </div>
-          ) : (
-            <div style={{ 
-              padding: '2rem', 
-              background: '#F6F6F7', 
-              borderRadius: '12px', 
-              textAlign: 'center',
-              marginBottom: '2rem'
-            }}>
-              <p style={{ color: '#5C5F62' }}>
-                No checkout data available yet. When customers start checkout, you'll see the funnel here.
-              </p>
+            
+            <div style={{ marginBottom: '1rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.25rem' }}>
+                <span>Completed</span>
+                <span>{checkoutFunnel.checkoutsCompleted}</span>
+              </div>
+              <div style={{ height: '20px', background: '#E4E5E7', borderRadius: '10px' }}>
+                <div style={{ 
+                  width: `${checkoutFunnel.totalCheckoutStarts > 0 ? (checkoutFunnel.checkoutsCompleted / checkoutFunnel.totalCheckoutStarts) * 100 : 0}%`, 
+                  height: '100%', 
+                  background: '#50B83C', 
+                  borderRadius: '10px' 
+                }} />
+              </div>
             </div>
-          )}
-          
-          {/* Recovery Impact */}
+          </div>
+
+          {/* Recovery opportunity */}
           {checkoutFunnel.checkoutsAbandoned > 0 && (
             <div style={{ 
-              padding: '1.5rem', 
               background: 'linear-gradient(135deg, #F6F6F7, #F1F2F3)',
+              padding: '1.5rem',
               borderRadius: '12px',
               display: 'flex',
               justifyContent: 'space-between',
@@ -661,22 +860,16 @@ export function CartAbandonmentDashboard({ cartAnalytics, checkoutFunnel }: Prop
               flexWrap: 'wrap'
             }}>
               <div>
-                <p style={{ fontSize: '0.9rem', color: '#5C5F62', marginBottom: '0.25rem' }}>
-                  Estimated Impact of Cart Recovery
+                <p style={{ fontSize: '1.1rem', fontWeight: '600', marginBottom: '0.25rem' }}>
+                  Recovery Opportunity
                 </p>
-                <p style={{ fontSize: '1.25rem', fontWeight: '600', color: '#006E52' }}>
-                  +{checkoutFunnel.purchasesAfterReminder || 0} additional purchases per month
-                </p>
-                <p style={{ fontSize: '0.8rem', color: '#5C5F62', marginTop: '0.25rem' }}>
-                  Based on 18% industry average recovery rate
+                <p style={{ color: '#5C5F62' }}>
+                  {checkoutFunnel.purchasesAfterReminder} additional purchases possible
                 </p>
               </div>
-              <div style={{ textAlign: 'right' }}>
-                <p style={{ fontSize: '0.9rem', color: '#5C5F62' }}>Potential Revenue</p>
-                <p style={{ fontSize: '1.5rem', fontWeight: '700', color: '#008060' }}>
-                  ${cartAnalytics.recoverableRevenue.toLocaleString() || 0}
-                </p>
-              </div>
+              <p style={{ fontSize: '2rem', fontWeight: '700', color: '#008060' }}>
+                ${cartAnalytics.recoverableRevenue.toLocaleString()}
+              </p>
             </div>
           )}
         </div>
@@ -684,3 +877,40 @@ export function CartAbandonmentDashboard({ cartAnalytics, checkoutFunnel }: Prop
     </div>
   );
 }
+
+/* Helper Components */
+function TabButton({ active, onClick, children }: any) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        padding: '0.75rem 1.5rem',
+        background: active ? '#008060' : 'white',
+        color: active ? 'white' : '#212B36',
+        border: active ? 'none' : '1px solid #8A9199',
+        borderRadius: '30px',
+        fontSize: '0.95rem',
+        fontWeight: '500',
+        cursor: 'pointer',
+        transition: 'all 0.2s'
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function StatCard({ label, value, color }: any) {
+  return (
+    <div style={{ 
+      padding: '1rem', 
+      background: '#F6F6F7', 
+      borderRadius: '8px',
+      textAlign: 'center'
+    }}>
+      <p style={{ fontSize: '0.8rem', color: '#5C5F62', marginBottom: '0.25rem' }}>{label}</p>
+      <p style={{ fontSize: '1.5rem', fontWeight: '700', color: color || '#212B36' }}>{value}</p>
+    </div>
+  );
+}
+

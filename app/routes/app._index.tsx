@@ -1,292 +1,697 @@
+import { useEffect, useState } from "react";
 import { useFetcher } from "react-router";
-import type { ActionFunctionArgs, LoaderFunctionArgs, HeadersFunction } from "react-router";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
-import { boundary } from "@shopify/shopify-app-react-router/server";
-import PDFDocument from "pdfkit";
-import { useState, useEffect } from "react";
 import { CartAbandonmentDashboard } from "./cart-abandonment";
+import { Resend } from 'resend';
 
 /* ---------------- TYPES ---------------- */
-type TrafficConversionIssue = {
-  product: string;
+type DateRange = {
+  startDate: string;
+  endDate: string;
+};
+
+type AbandonedCartItem = {
+  productId: string | null;
+  productName: string;
+  quantity: number;
+  price: number;
+};
+
+type AbandonedCart = {
+  id: string;
+  customerEmail: string | null;
+  customerFirstName: string | null;
+  customerLastName: string | null;
+  isLoggedIn: boolean;
+  abandonedAt: string;
+  totalPrice: number;
+  lineItems: AbandonedCartItem[];
+  lineItemsCount: number;
+};
+
+type CompletedOrder = {
+  id: string;
+  name: string;
+  customerEmail: string | null;
+  customerFirstName: string | null;
+  customerLastName: string | null;
+  isLoggedIn: boolean;
+  processedAt: string;
+  totalPrice: number;
+  lineItems: AbandonedCartItem[];
+  lineItemsCount: number;
+};
+
+type ProductConversion = {
   productId: string;
-  productUrl: string;
-  views: number | null;
-  atc: number | null;
-  purchases: number;
+  productName: string;
+  addedToCart: number;
+  purchased: number;
   conversionRate: string;
-  insight: string;
 };
 
-type CheckoutAbandonmentIssue = {
-  starts: number;
-  completed: number;
-  abandonmentRate: string;
-  insight: string;
+type MissingPage = {
+  pageType: string;
+  isMissing: boolean;
+  severity: 'high' | 'medium' | 'low';
+  recommendation: string;
 };
 
-type UxSpeedSignals = {
-  theme: string;
-  themeRole: string;
-  appsDetected: number;
-  appNames: string[];
-  imageHeavyPages: number;
-  insight: string;
-};
-
-type TrustGapIssue = {
-  issue: string;
-  severity: "high" | "medium" | "low";
-  found: boolean;
-  details: string;
-};
-
-type TrackingHealthIssue = {
-  issue: string;
-  severity: "high" | "medium" | "low";
-  found: boolean;
-  details: string;
-};
-
-type CartAbandonmentData = {
-  totalCarts: number;
-  cartsWithCheckout: number;
-  cartsWithoutCheckout: number;
-  abandonedCarts: number;
-  recoveryRate: string;
-  abandonmentRate: string;
-  potentialRevenue: number;
-  recoverableRevenue: number;
-  topAbandonedProducts: {
-    productId: string;
-    productName: string;
-    quantity: number;
-    price: number;
-    totalValue: number;
-    abandonCount: number;
-  }[];
-  recentAbandonedCarts: {
-    cartId: string;
-    customerEmail: string | null;
-    customerName: string | null;
-    isLoggedIn: boolean;
-    abandonedAt: string;
-    totalPrice: number;
-    itemCount: number;
-    items: {
-      productId: string;
-      productName: string;
-      quantity: number;
-      price: number;
-    }[];
-  }[];
-};
-
-type CheckoutFunnelData = {
-  totalCheckoutStarts: number;
-  checkoutsCompleted: number;
-  checkoutsAbandoned: number;
-  completionRate: string;
-  abandonmentRate: string;
-  purchasesAfterCheckout: number;
-  purchasesAfterReminder: number;
-  conversionRate: string;
-  averageOrderValue: number;
-  checkoutSteps: {
-    step: string;
-    entered: number;
-    completed: number;
-    dropoffRate: string;
-  }[];
-  dailyFunnel: {
-    date: string;
-    started: number;
-    completed: number;
-    abandoned: number;
-  }[];
-};
-
-type ScanMetrics = {
-  shopName: string;
-  plan: string;
+type ProductStats = {
   totalProducts: number;
-  totalProductsWithImages: number;
-  totalProductsWithoutImages: number;
-  totalProductsWithDescription: number;
-  totalProductsWithoutDescription: number;
-  totalOrders: number;
-  totalRevenue: number;
-  totalAbandonedCheckouts: number;
-  score: number;
-  grade: string;
-  estimatedMonthlyLoss: number;
-  scanDate: string;
-  cartAnalytics: CartAbandonmentData;
-  checkoutFunnel: CheckoutFunnelData;
+  missingImages: number;
+  missingDescriptions: number;
+  missingTitles: number;
+  missingReviews: number;
+  productsWithIssues: {
+    id: string;
+    title: string;
+    missingImages: boolean;
+    missingDescription: boolean;
+    missingTitle: boolean;
+    missingReviews: boolean;
+  }[];
+};
+
+type CartAnalytics = {
+  totalCarts: number;
+  abandonedCarts: number;
+  completedCarts: number;
+  abandonmentRate: string;
+  completionRate: string;
+  potentialRevenue: number;
+  completedRevenue: number;
+  recoverableRevenue: number;
+  abandonedCartsList: AbandonedCart[];
+  completedOrdersList: CompletedOrder[];
+  guestAbandonedCarts: AbandonedCart[];
+  topAbandonedProducts: {
+    productName: string;
+    abandonCount: number;
+    totalValue: number;
+  }[];
+  productConversions: ProductConversion[];
+  missingPages: MissingPage[];
+  productStats: ProductStats;
+  dateRange: DateRange;
 };
 
 type ScanResult = {
   scanned: boolean;
+  scanId: string;
+  scanDate: string;
   error?: string;
-  metrics: ScanMetrics;
-  trafficConversionIssues: TrafficConversionIssue[];
-  checkoutAbandonmentIssues: CheckoutAbandonmentIssue[];
-  uxSpeedSignals: UxSpeedSignals;
-  trustGapIssues: TrustGapIssue[];
-  trackingHealthIssues: TrackingHealthIssue[];
-  topIssues: string[];
+  metrics: {
+    shopName: string;
+    totalOrders: number;
+    totalRevenue: number;
+    cartAnalytics: CartAnalytics;
+  };
 };
+
+// Local storage key for persistent results
+const STORAGE_KEY = 'revenue_scanner_results';
 
 /* ---------------- LOADER ---------------- */
-export const loader = async ({ request }: LoaderFunctionArgs) => {
+export async function loader({ request }: LoaderFunctionArgs) {
   await authenticate.admin(request);
   return {};
-};
+}
 
 /* ---------------- ACTION ---------------- */
-export const action = async ({ request }: ActionFunctionArgs) => {
+export async function action({ request }: ActionFunctionArgs) {
   const { admin } = await authenticate.admin(request);
   const url = new URL(request.url);
-  const mode = url.searchParams.get("mode");
+  const actionType = url.searchParams.get("action");
 
-  // Handle PDF download
-  if (mode === "pdf" && request.method === "GET") {
+  console.log("🔧 Action called:", actionType, request.method);
+
+  // ============ SEND REMINDER EMAIL WITH RESEND ============
+  if (actionType === "send_reminder" && request.method === "POST") {
     try {
-      const shopQuery = await admin.graphql(`
+      console.log("📧 Starting send reminder process...");
+      
+      const formData = await request.formData();
+      const cartId = formData.get("cartId")?.toString() || "";
+      const customerEmail = formData.get("email")?.toString() || "";
+      const customerName = formData.get("name")?.toString() || "Customer";
+      const cartTotal = formData.get("total")?.toString() || "0";
+      const discountPercentage = formData.get("discount")?.toString() || "15";
+      const message = formData.get("message")?.toString() || "Hi {name}, we noticed you left some items in your cart. Complete your purchase now and enjoy {discount} off!";
+      
+      console.log("📧 Form data received:", {
+        cartId,
+        customerEmail,
+        customerName,
+        cartTotal,
+        discountPercentage
+      });
+      
+      // Validate email
+      if (!customerEmail) {
+        console.error("❌ No email address provided");
+        return new Response(JSON.stringify({
+          success: false,
+          message: "No email address provided"
+        }), {
+          status: 400,
+          headers: { "Content-Type": "application/json" }
+        });
+      }
+
+      // Check if Resend API key exists
+      const resendApiKey = process.env.RESEND_API_KEY;
+      console.log("📧 Resend API Key exists:", !!resendApiKey);
+      
+      if (!resendApiKey) {
+        console.error("❌ RESEND_API_KEY not found in environment variables");
+        return new Response(JSON.stringify({
+          success: false,
+          message: "Email service not configured. Please add RESEND_API_KEY to .env file"
+        }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" }
+        });
+      }
+
+      // Initialize Resend with your API key
+      const resend = new Resend(resendApiKey);
+
+      // Generate a discount code
+      const discountCode = `SAVE${discountPercentage}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+      
+      // Format the message with customer name and discount
+      const formattedMessage = message
+        .replace('{name}', customerName)
+        .replace('{discount}', `${discountPercentage}% off with code: ${discountCode}`);
+      
+      console.log("📧 Sending real email via Resend to:", customerEmail);
+      
+      // Create HTML email template
+      const emailHtml = `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Complete Your Purchase</title>
+          </head>
+          <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; background-color: #f4f4f4;">
+            <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f4f4f4; padding: 20px;">
+              <tr>
+                <td align="center">
+                  <table width="600" cellpadding="0" cellspacing="0" style="background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.1);">
+                    
+                    <!-- Header -->
+                    <tr>
+                      <td style="background-color: #008060; padding: 30px; text-align: center;">
+                        <h1 style="color: white; margin: 0; font-size: 28px;">🛍️ Complete Your Purchase</h1>
+                      </td>
+                    </tr>
+                    
+                    <!-- Content -->
+                    <tr>
+                      <td style="padding: 40px 30px;">
+                        <h2 style="color: #333; margin-top: 0;">Hello ${customerName},</h2>
+                        
+                        <p style="color: #666; line-height: 1.6; font-size: 16px;">
+                          We noticed you left some items in your cart. They're still waiting for you!
+                        </p>
+                        
+                        <!-- Cart Value Box -->
+                        <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f8f9fa; border-radius: 8px; margin: 25px 0;">
+                          <tr>
+                            <td style="padding: 20px; text-align: center;">
+                              <p style="margin: 0; color: #666; font-size: 14px;">Your Cart Total</p>
+                              <p style="margin: 5px 0 0; font-size: 32px; font-weight: bold; color: #008060;">
+                                $${parseFloat(cartTotal).toFixed(2)}
+                              </p>
+                            </td>
+                          </tr>
+                        </table>
+                        
+                        <!-- Custom Message -->
+                        <p style="color: #666; line-height: 1.6; font-size: 16px;">
+                          ${formattedMessage}
+                        </p>
+                        
+                        <!-- Discount Code Box -->
+                        <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #008060; border-radius: 8px; margin: 25px 0;">
+                          <tr>
+                            <td style="padding: 25px; text-align: center;">
+                              <p style="margin: 0; color: white; font-size: 14px; opacity: 0.9;">Your Exclusive Discount</p>
+                              <p style="margin: 10px 0; font-size: 36px; font-weight: bold; color: white; letter-spacing: 2px;">
+                                ${discountCode}
+                              </p>
+                              <p style="margin: 0; color: white; font-size: 18px;">
+                                ${discountPercentage}% OFF
+                              </p>
+                            </td>
+                          </tr>
+                        </table>
+                        
+                        <!-- CTA Button -->
+                        <table width="100%" cellpadding="0" cellspacing="0">
+                          <tr>
+                            <td align="center">
+                              <a href="#" style="background-color: #008060; color: white; padding: 15px 40px; text-decoration: none; border-radius: 50px; font-weight: bold; font-size: 18px; display: inline-block;">
+                                Complete Your Purchase
+                              </a>
+                            </td>
+                          </tr>
+                        </table>
+                        
+                        <p style="color: #999; font-size: 14px; text-align: center; margin-top: 30px;">
+                          This discount code expires in 7 days. Shop now to save!
+                        </p>
+                      </td>
+                    </tr>
+                    
+                    <!-- Footer -->
+                    <tr>
+                      <td style="background-color: #f8f9fa; padding: 20px; text-align: center; border-top: 1px solid #e4e5e7;">
+                        <p style="margin: 0; color: #999; font-size: 12px;">
+                          © 2024 Your Store. All rights reserved.
+                        </p>
+                        <p style="margin: 5px 0 0; color: #999; font-size: 12px;">
+                          You received this email because you started a checkout at our store.
+                        </p>
+                      </td>
+                    </tr>
+                  </table>
+                </td>
+              </tr>
+            </table>
+          </body>
+        </html>
+      `;
+      
+      // Create plain text version
+      const plainText = `
+        Hello ${customerName},
+        
+        We noticed you left some items in your cart. They're still waiting for you!
+        
+        Your Cart Total: $${parseFloat(cartTotal).toFixed(2)}
+        
+        ${formattedMessage}
+        
+        Your exclusive discount code: ${discountCode} (${discountPercentage}% OFF)
+        
+        Complete your purchase now and save!
+        
+        This discount code expires in 7 days.
+      `;
+      
+      console.log("📧 Attempting to send email via Resend...");
+      
+      // Send actual email using Resend
+      const { data, error } = await resend.emails.send({
+        from: 'Revenue Scanner <onboarding@resend.dev>',
+        to: [customerEmail],
+        subject: `Complete Your Purchase - ${discountPercentage}% Off Inside!`,
+        html: emailHtml,
+        text: plainText,
+      });
+
+      if (error) {
+        console.error("❌ Resend error details:", error);
+        return new Response(JSON.stringify({
+          success: false,
+          message: `Failed to send email: ${error.message}`,
+          error: error
+        }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" }
+        });
+      }
+
+      console.log("✅ Email sent successfully via Resend:", data);
+      
+      return new Response(JSON.stringify({
+        success: true,
+        message: `✅ Email sent to ${customerEmail}`,
+        sentTo: customerEmail,
+        cartId,
+        discountCode,
+        discountValue: `${discountPercentage}% OFF`,
+        formattedMessage,
+        emailId: data?.id
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      });
+      
+    } catch (error) {
+      console.error("❌ Send reminder error details:", error);
+      return new Response(JSON.stringify({
+        success: false,
+        message: error instanceof Error ? error.message : "Failed to send reminder",
+        error: error instanceof Error ? error.stack : String(error)
+      }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+  }
+
+  // ============ REGULAR SCAN WITH DATE RANGE ============
+  if (request.method === "POST" && !actionType) {
+    try {
+      const formData = await request.formData();
+      const startDate = formData.get("startDate")?.toString() || getDefaultStartDate();
+      const endDate = formData.get("endDate")?.toString() || getDefaultEndDate();
+      
+      console.log("🔍 STARTING SCAN with date range:", { startDate, endDate });
+
+      // ============ 1. SHOP INFO ============
+      const shopQuery = await admin.graphql(
+        `#graphql
         query {
           shop {
             name
             myshopifyDomain
           }
-        }
-      `);
-      
-      const shopData = await shopQuery.json();
-      const shop = shopData.data?.shop;
-      const shopName = shop?.name || "Your Store";
-      
-      const doc = new PDFDocument({ margin: 50, size: 'A4' });
-      const buffers: Buffer[] = [];
-      doc.on("data", buffers.push.bind(buffers));
-      
-      doc.rect(0, 0, doc.page.width, 120).fill('#008060');
-      doc.fillColor('white').fontSize(28).font('Helvetica-Bold').text('Revenue Leak Report', 50, 45);
-      doc.fontSize(14).font('Helvetica').text(shopName, 50, 85);
-      doc.end();
-      
-      await new Promise<void>((resolve) => {
-        doc.on("end", () => resolve());
-      });
+        }`
+      );
 
-      return new Response(Buffer.concat(buffers), {
-        status: 200,
-        headers: {
-          "Content-Type": "application/pdf",
-          "Content-Disposition": `inline; filename="${shopName}-revenue-leak-report.pdf"`,
-        },
-      });
-    } catch (error) {
-      return new Response("Failed to generate PDF", { status: 500 });
-    }
-  }
+      const shopData = await shopQuery.json() as any;
+      const shopName = shopData.data?.shop?.name || "Your Store";
+      console.log(`✅ Shop: ${shopName}`);
 
-  // REAL SCAN - ONLY ACTUAL STORE DATA
-  if (request.method === "POST") {
-    console.log("🔍 Starting REAL revenue leak scan...");
-
-    // Initialize with defaults
-    const scanResult: ScanResult = {
-      scanned: true,
-      metrics: {
-        shopName: "",
-        plan: "Unknown",
-        totalProducts: 0,
-        totalProductsWithImages: 0,
-        totalProductsWithoutImages: 0,
-        totalProductsWithDescription: 0,
-        totalProductsWithoutDescription: 0,
-        totalOrders: 0,
-        totalRevenue: 0,
-        totalAbandonedCheckouts: 0,
-        score: 0,
-        grade: "C",
-        estimatedMonthlyLoss: 0,
-        scanDate: new Date().toISOString(),
-        cartAnalytics: {
-          totalCarts: 0,
-          cartsWithCheckout: 0,
-          cartsWithoutCheckout: 0,
-          abandonedCarts: 0,
-          recoveryRate: "0%",
-          abandonmentRate: "0%",
-          potentialRevenue: 0,
-          recoverableRevenue: 0,
-          topAbandonedProducts: [],
-          recentAbandonedCarts: []
-        },
-        checkoutFunnel: {
-          totalCheckoutStarts: 0,
-          checkoutsCompleted: 0,
-          checkoutsAbandoned: 0,
-          completionRate: "0%",
-          abandonmentRate: "0%",
-          purchasesAfterCheckout: 0,
-          purchasesAfterReminder: 0,
-          conversionRate: "0%",
-          averageOrderValue: 0,
-          checkoutSteps: [],
-          dailyFunnel: []
-        }
-      },
-      trafficConversionIssues: [],
-      checkoutAbandonmentIssues: [],
-      uxSpeedSignals: {
-        theme: "Unknown",
-        themeRole: "unknown",
-        appsDetected: 0,
-        appNames: [],
-        imageHeavyPages: 0,
-        insight: "Scanning store data...",
-      },
-      trustGapIssues: [],
-      trackingHealthIssues: [],
-      topIssues: [],
-    };
-
-    try {
-      // ============ 1. SHOP INFO ============
-      console.log("🏪 Fetching shop info...");
-      const shopQuery = await admin.graphql(`
+      // ============ 2. COMPLETED ORDERS ============
+      console.log("📦 Fetching completed orders...");
+      
+      const ordersQuery = await admin.graphql(
+        `#graphql
         query {
-          shop {
-            name
-            plan {
-              displayName
+          orders(first: 250, query: "created_at:>=${startDate} AND created_at:<=${endDate}") {
+            edges {
+              node {
+                id
+                name
+                customer {
+                  id
+                  email
+                  firstName
+                  lastName
+                }
+                totalPriceSet {
+                  shopMoney {
+                    amount
+                  }
+                }
+                processedAt
+                lineItems(first: 20) {
+                  edges {
+                    node {
+                      name
+                      quantity
+                      originalTotalSet {
+                        shopMoney {
+                          amount
+                        }
+                      }
+                      product {
+                        id
+                        title
+                      }
+                    }
+                  }
+                }
+              }
             }
           }
-        }
-      `);
+        }`
+      );
+
+      const ordersData = await ordersQuery.json() as any;
+      const orders = ordersData.data?.orders?.edges || [];
+      console.log(`✅ Found ${orders.length} completed orders`);
+
+      // Process completed orders
+      const completedOrdersList: CompletedOrder[] = orders.map(({ node }: any) => {
+        const customer = node.customer;
+        
+        const lineItems = (node.lineItems?.edges || []).map(({ node: item }: any) => {
+          const totalPrice = parseFloat(item.originalTotalSet?.shopMoney?.amount || "0");
+          const quantity = item.quantity || 1;
+          
+          return {
+            productId: item.product?.id || null,
+            productName: item.product?.title || item.name || "Unknown Product",
+            quantity: quantity,
+            price: quantity > 0 ? totalPrice / quantity : 0
+          };
+        });
+
+        return {
+          id: node.id,
+          name: node.name || "",
+          customerEmail: customer?.email || null,
+          customerFirstName: customer?.firstName || null,
+          customerLastName: customer?.lastName || null,
+          isLoggedIn: !!customer?.id,
+          processedAt: node.processedAt || new Date().toISOString(),
+          totalPrice: parseFloat(node.totalPriceSet?.shopMoney?.amount || "0"),
+          lineItems: lineItems,
+          lineItemsCount: lineItems.length
+        };
+      });
+
+      const completedRevenue = completedOrdersList.reduce((sum, order) => sum + order.totalPrice, 0);
+
+      // ============ 3. ABANDONED CHECKOUTS ============
+      console.log("🛒 Fetching abandoned checkouts...");
+
+      const abandonedQuery = await admin.graphql(
+        `#graphql
+        query {
+          abandonedCheckouts(first: 250) {
+            edges {
+              node {
+                id
+                customer {
+                  id
+                  email
+                  firstName
+                  lastName
+                }
+                totalPriceSet {
+                  shopMoney {
+                    amount
+                  }
+                }
+                lineItems(first: 20) {
+                  edges {
+                    node {
+                      title
+                      quantity
+                      product {
+                        id
+                        title
+                      }
+                    }
+                  }
+                }
+                completedAt
+                createdAt
+              }
+            }
+          }
+        }`
+      );
+
+      const abandonedData = await abandonedQuery.json() as any;
       
-      const shopData = await shopQuery.json();
-      const shop = shopData.data?.shop;
-      
-      if (shop) {
-        scanResult.metrics.shopName = shop.name || "";
-        scanResult.metrics.plan = shop.plan?.displayName || "Basic Shopify";
+      if (abandonedData.errors) {
+        console.error("❌ GraphQL errors:", abandonedData.errors);
       }
 
-      // ============ 2. PRODUCTS - REAL DATA ============
-      console.log("📦 Scanning products...");
-      const productsQuery = await admin.graphql(`
+      const allAbandoned = abandonedData.data?.abandonedCheckouts?.edges || [];
+      console.log(`📊 Total from API: ${allAbandoned.length}`);
+      
+      // Filter by date range and not completed
+      const abandonedCheckouts = allAbandoned.filter(({ node }: any) => {
+        if (node.completedAt) return false;
+        const createdAt = node.createdAt?.split('T')[0] || '';
+        return createdAt >= startDate && createdAt <= endDate;
+      });
+      
+      console.log(`✅ Found ${abandonedCheckouts.length} abandoned checkouts in date range`);
+
+      const abandonedCartsList: AbandonedCart[] = abandonedCheckouts.map(({ node }: any) => {
+        const customer = node.customer;
+        
+        let totalPrice = 0;
+        if (node.totalPriceSet?.shopMoney?.amount) {
+          totalPrice = parseFloat(node.totalPriceSet.shopMoney.amount);
+        }
+        
+        const lineItems = (node.lineItems?.edges || []).map(({ node: item }: any) => {
+          return {
+            productId: item.product?.id || null,
+            productName: item.product?.title || item.title || "Unknown Product",
+            quantity: item.quantity || 1,
+            price: 0
+          };
+        });
+
+        return {
+          id: node.id,
+          customerEmail: customer?.email || null,
+          customerFirstName: customer?.firstName || null,
+          customerLastName: customer?.lastName || null,
+          isLoggedIn: !!customer?.id,
+          abandonedAt: node.createdAt || new Date().toISOString(),
+          totalPrice: totalPrice,
+          lineItems: lineItems,
+          lineItemsCount: lineItems.length
+        };
+      });
+
+      // Guest abandoned carts (not logged in)
+      const guestAbandonedCarts = abandonedCartsList.filter(cart => !cart.isLoggedIn);
+
+      const potentialRevenue = abandonedCartsList.reduce((sum, cart) => sum + cart.totalPrice, 0);
+      
+      const abandonedWithEmail = abandonedCartsList.filter(c => c.customerEmail).length;
+      console.log(`📧 Abandoned with email: ${abandonedWithEmail}`);
+      console.log(`👤 Guest abandoned carts: ${guestAbandonedCarts.length}`);
+
+      // Calculate product conversions
+      const productConversionMap = new Map<string, { added: number; purchased: number; name: string }>();
+      
+      // Track abandoned adds
+      abandonedCartsList.forEach(cart => {
+        cart.lineItems.forEach(item => {
+          if (item.productId) {
+            const key = item.productId;
+            const existing = productConversionMap.get(key) || { added: 0, purchased: 0, name: item.productName };
+            existing.added += item.quantity;
+            productConversionMap.set(key, existing);
+          }
+        });
+      });
+      
+      // Track purchases
+      completedOrdersList.forEach(order => {
+        order.lineItems.forEach(item => {
+          if (item.productId) {
+            const key = item.productId;
+            const existing = productConversionMap.get(key) || { added: 0, purchased: 0, name: item.productName };
+            existing.purchased += item.quantity;
+            productConversionMap.set(key, existing);
+          }
+        });
+      });
+
+      const productConversions: ProductConversion[] = Array.from(productConversionMap.entries())
+        .map(([productId, data]) => ({
+          productId,
+          productName: data.name,
+          addedToCart: data.added,
+          purchased: data.purchased,
+          conversionRate: data.added > 0 ? ((data.purchased / data.added) * 100).toFixed(1) + '%' : '0%'
+        }))
+        .filter(p => p.addedToCart > 0)
+        .sort((a, b) => (b.addedToCart - b.purchased) - (a.addedToCart - a.purchased))
+        .slice(0, 10);
+
+      // Calculate top abandoned products
+      const productMap = new Map<string, { name: string; count: number; value: number }>();
+      
+      abandonedCartsList.forEach(cart => {
+        cart.lineItems.forEach(item => {
+          const key = item.productName;
+          const existing = productMap.get(key) || { name: key, count: 0, value: 0 };
+          existing.count += item.quantity;
+          productMap.set(key, existing);
+        });
+      });
+
+      const topAbandonedProducts = Array.from(productMap.values())
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 5)
+        .map(p => ({
+          productName: p.name,
+          abandonCount: p.count,
+          totalValue: 0
+        }));
+
+      // ============ 4. CHECK MISSING PAGES ============
+      console.log("📄 Checking for missing pages...");
+      
+      const pagesQuery = await admin.graphql(
+        `#graphql
+        query {
+          pages(first: 50) {
+            edges {
+              node {
+                title
+                handle
+              }
+            }
+          }
+        }`
+      );
+      
+      const pagesData = await pagesQuery.json() as any;
+      const pages = pagesData.data?.pages?.edges || [];
+      const pageTitles = pages.map((p: any) => p.node.title.toLowerCase());
+      
+      const missingPages: MissingPage[] = [
+        {
+          pageType: 'About Us',
+          isMissing: !pageTitles.some((t: string | string[]) => t.includes('about')),
+          severity: 'medium',
+          recommendation: 'Add an About Us page to build trust with customers'
+        },
+        {
+          pageType: 'Shipping Policy',
+          isMissing: !pageTitles.some((t: string | string[]) => t.includes('shipping') || t.includes('delivery')),
+          severity: 'high',
+          recommendation: 'Add a clear shipping policy to reduce cart abandonment'
+        },
+        {
+          pageType: 'Return Policy',
+          isMissing: !pageTitles.some((t: string | string[]) => t.includes('return') || t.includes('refund')),
+          severity: 'high',
+          recommendation: 'Add a return policy to increase customer confidence'
+        },
+        {
+          pageType: 'Privacy Policy',
+          isMissing: !pageTitles.some((t: string | string[]) => t.includes('privacy')),
+          severity: 'high',
+          recommendation: 'Privacy policy is legally required for most businesses'
+        },
+        {
+          pageType: 'FAQ',
+          isMissing: !pageTitles.some((t: string | string[]) => t.includes('faq') || t.includes('questions')),
+          severity: 'medium',
+          recommendation: 'Add an FAQ page to answer common customer questions'
+        },
+        {
+          pageType: 'Contact Us',
+          isMissing: !pageTitles.some((t: string | string[]) => t.includes('contact')),
+          severity: 'high',
+          recommendation: 'Add a contact page so customers can reach you'
+        }
+      ];
+
+      // ============ 5. CHECK PRODUCT STATS ============
+      console.log("📦 Checking product statistics...");
+      
+      const productsQuery = await admin.graphql(
+        `#graphql
         query {
           products(first: 250) {
             edges {
               node {
                 id
                 title
-                handle
                 description
-                descriptionHtml
                 featuredImage {
                   url
                 }
@@ -297,7 +702,6 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                     }
                   }
                 }
-                onlineStoreUrl
                 priceRange {
                   minVariantPrice {
                     amount
@@ -306,591 +710,178 @@ export const action = async ({ request }: ActionFunctionArgs) => {
               }
             }
           }
-        }
-      `);
+        }`
+      );
       
-      const productsData = await productsQuery.json();
+      const productsData = await productsQuery.json() as any;
       const products = productsData.data?.products?.edges || [];
       
-      scanResult.metrics.totalProducts = products.length;
+      let missingImages = 0;
+      let missingDescriptions = 0;
+      let missingTitles = 0;
+      let missingReviews = 0; // We'll assume reviews are missing for now (would need separate query)
       
-      const productsWithoutImages = products.filter((p: any) => 
-        !p.node.featuredImage?.url && (!p.node.images?.edges || p.node.images.edges.length === 0)
-      );
-      scanResult.metrics.totalProductsWithoutImages = productsWithoutImages.length;
-      scanResult.metrics.totalProductsWithImages = products.length - productsWithoutImages.length;
+      const productsWithIssues: any[] = [];
       
-      const productsWithoutDescription = products.filter((p: any) => 
-        !p.node.description || p.node.description.trim().length < 20
-      );
-      scanResult.metrics.totalProductsWithoutDescription = productsWithoutDescription.length;
-      scanResult.metrics.totalProductsWithDescription = products.length - productsWithoutDescription.length;
-
-      // ============ 3. ORDERS - REAL DATA ============
-      console.log("💰 Fetching orders...");
-      const ordersQuery = await admin.graphql(`
-        query {
-          orders(first: 100, reverse: true, query: "processed_at>=2024-01-01") {
-            edges {
-              node {
-                id
-                totalPriceSet {
-                  shopMoney {
-                    amount
-                  }
-                }
-                processedAt
-                lineItems(first: 50) {
-                  edges {
-                    node {
-                      product {
-                        id
-                        title
-                      }
-                      quantity
-                      originalTotalSet {
-                        shopMoney {
-                          amount
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      `);
-      
-      const ordersData = await ordersQuery.json();
-      const orders = ordersData.data?.orders?.edges || [];
-      
-      scanResult.metrics.totalOrders = orders.length;
-      
-      const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-      
-      const monthlyOrders = orders.filter((order: any) => 
-        new Date(order.node.processedAt) > thirtyDaysAgo
-      );
-      
-      const monthlyRevenue = monthlyOrders.reduce((sum: number, order: any) => 
-        sum + parseFloat(order.node.totalPriceSet?.shopMoney?.amount || "0"), 0);
-      
-      scanResult.metrics.totalRevenue = Math.round(monthlyRevenue);
-      
-      // Calculate average order value with proper typing
-const averageOrderValue = orders.length > 0 
-  ? orders.reduce((sum: number, order: any) => 
-      sum + parseFloat(order.node.totalPriceSet?.shopMoney?.amount || "0"), 0) / orders.length
-  : 0;
-      
-      scanResult.metrics.checkoutFunnel.averageOrderValue = Math.round(averageOrderValue * 100) / 100;
-
-      // Track product purchases
-      const productPurchases: Record<string, number> = {};
-      
-      orders.forEach((order: any) => {
-        order.node.lineItems?.edges?.forEach((item: any) => {
-          const productId = item.node.product?.id;
-          if (productId) {
-            productPurchases[productId] = (productPurchases[productId] || 0) + item.node.quantity || 1;
-          }
-        });
-      });
-
-      // Products with NO purchases
-      const productsWithNoPurchases = products
-        .filter((p: any) => !productPurchases[p.node.id])
-        .slice(0, 3);
-      
-      productsWithNoPurchases.forEach((p: any) => {
-        scanResult.trafficConversionIssues.push({
-          product: p.node.title,
-          productId: p.node.id,
-          productUrl: p.node.onlineStoreUrl || `https://${shop?.myshopifyDomain}/products/${p.node.handle}`,
-          views: null,
-          atc: null,
-          purchases: 0,
-          conversionRate: "0.0",
-          insight: "This product has been added to your store but hasn't sold yet"
-        });
-      });
-
-      // ============ 4. ABANDONED CHECKOUTS - REAL DATA ============
-      console.log("🛒 Analyzing abandoned checkouts...");
-      
-      try {
-        const checkoutsQuery = await admin.graphql(`
-          query {
-            abandonedCheckouts(first: 100, reverse: true) {
-              edges {
-                node {
-                  id
-                  abandonedAt
-                  email
-                  customer {
-                    id
-                    email
-                    firstName
-                    lastName
-                    acceptsMarketing
-                  }
-                  totalPriceSet {
-                    shopMoney {
-                      amount
-                    }
-                  }
-                  lineItems(first: 50) {
-                    edges {
-                      node {
-                        title
-                        quantity
-                        originalTotalSet {
-                          shopMoney {
-                            amount
-                          }
-                        }
-                        product {
-                          id
-                          title
-                        }
-                      }
-                    }
-                  }
-                  checkoutUrl
-                  completedAt
-                  currency
-                  taxesIncluded
-                }
-              }
-            }
-          }
-        `);
+      products.forEach(({ node }: any) => {
+        const hasImages = node.featuredImage?.url || (node.images?.edges && node.images.edges.length > 0);
+        const hasDescription = node.description && node.description.trim().length >= 20;
+        const hasTitle = node.title && node.title.trim().length > 0;
         
-        const checkoutsData = await checkoutsQuery.json();
-        const abandonedCheckouts = checkoutsData.data?.abandonedCheckouts?.edges || [];
+        if (!hasImages) missingImages++;
+        if (!hasDescription) missingDescriptions++;
+        if (!hasTitle) missingTitles++;
         
-        // FILTER: Only show abandoned checkouts from last 30 days
-        const thirtyDaysAgo = new Date();
-        thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+        // For now, assume no reviews (would need separate query)
+        missingReviews += 1;
         
-        const recentAbandonedCheckouts = abandonedCheckouts.filter((c: any) => 
-          !c.node.completedAt && new Date(c.node.abandonedAt) > thirtyDaysAgo
-        );
-        
-        const completedCheckouts = orders.length;
-        
-        scanResult.metrics.totalAbandonedCheckouts = recentAbandonedCheckouts.length;
-        
-        // Calculate REAL abandonment rate
-        const totalCheckoutStarts = completedCheckouts + recentAbandonedCheckouts.length;
-        
-        if (totalCheckoutStarts > 0) {
-          const abandonmentRate = ((recentAbandonedCheckouts.length) / totalCheckoutStarts * 100).toFixed(1);
-          
-          scanResult.metrics.checkoutFunnel = {
-            totalCheckoutStarts,
-            checkoutsCompleted: completedCheckouts,
-            checkoutsAbandoned: recentAbandonedCheckouts.length,
-            completionRate: `${(100 - parseFloat(abandonmentRate)).toFixed(1)}%`,
-            abandonmentRate: `${abandonmentRate}%`,
-            purchasesAfterCheckout: completedCheckouts,
-            purchasesAfterReminder: Math.round(recentAbandonedCheckouts.length * 0.18),
-            conversionRate: `${(100 - parseFloat(abandonmentRate)).toFixed(1)}%`,
-            averageOrderValue: scanResult.metrics.checkoutFunnel.averageOrderValue,
-            checkoutSteps: [
-              { step: "View Cart", entered: totalCheckoutStarts, completed: Math.round(totalCheckoutStarts * 0.9), dropoffRate: "10%" },
-              { step: "Information", entered: Math.round(totalCheckoutStarts * 0.9), completed: Math.round(totalCheckoutStarts * 0.75), dropoffRate: "16.7%" },
-              { step: "Shipping", entered: Math.round(totalCheckoutStarts * 0.75), completed: Math.round(totalCheckoutStarts * 0.7), dropoffRate: "6.7%" },
-              { step: "Payment", entered: Math.round(totalCheckoutStarts * 0.7), completed: Math.round(totalCheckoutStarts * 0.65), dropoffRate: "7.1%" },
-              { step: "Complete", entered: Math.round(totalCheckoutStarts * 0.65), completed: completedCheckouts, dropoffRate: `${((1 - (completedCheckouts / (totalCheckoutStarts * 0.65))) * 100).toFixed(1)}%` }
-            ],
-            dailyFunnel: []
-          };
-          
-          // Calculate cart analytics
-          const potentialRevenue = recentAbandonedCheckouts.reduce((sum: number, cart: any) => 
-            sum + parseFloat(cart.node.totalPriceSet?.shopMoney?.amount || "0"), 0);
-          
-          // Track top abandoned products
-          const abandonedProducts: Record<string, any> = {};
-          
-          recentAbandonedCheckouts.forEach((cart: any) => {
-            cart.node.lineItems?.edges?.forEach((item: any) => {
-              const productId = item.node.product?.id || `custom-${item.node.title}`;
-              const price = parseFloat(item.node.originalTotalSet?.shopMoney?.amount || "0") / (item.node.quantity || 1);
-              
-              if (!abandonedProducts[productId]) {
-                abandonedProducts[productId] = {
-                  productId,
-                  productName: item.node.product?.title || item.node.title,
-                  quantity: 0,
-                  price,
-                  totalValue: 0,
-                  abandonCount: 0
-                };
-              }
-              
-              abandonedProducts[productId].quantity += item.node.quantity || 1;
-              abandonedProducts[productId].totalValue += parseFloat(item.node.originalTotalSet?.shopMoney?.amount || "0");
-              abandonedProducts[productId].abandonCount += 1;
-            });
+        // Track products with issues for detailed view
+        if (!hasImages || !hasDescription || !hasTitle) {
+          productsWithIssues.push({
+            id: node.id,
+            title: node.title || "Untitled Product",
+            missingImages: !hasImages,
+            missingDescription: !hasDescription,
+            missingTitle: !hasTitle,
+            missingReviews: true
           });
-          
-          // Recent abandoned carts
-          const recentAbandonedCarts = recentAbandonedCheckouts.slice(0, 10).map((cart: any) => ({
-            cartId: cart.node.id,
-            customerEmail: cart.node.email || cart.node.customer?.email,
-            customerName: cart.node.customer?.firstName 
-              ? `${cart.node.customer.firstName} ${cart.node.customer.lastName || ''}`.trim()
-              : null,
-            isLoggedIn: !!cart.node.customer?.id,
-            abandonedAt: cart.node.abandonedAt,
-            totalPrice: parseFloat(cart.node.totalPriceSet?.shopMoney?.amount || "0"),
-            itemCount: cart.node.lineItems?.edges?.length || 0,
-            items: cart.node.lineItems?.edges?.map((item: any) => ({
-              productId: item.node.product?.id,
-              productName: item.node.product?.title || item.node.title,
-              quantity: item.node.quantity || 1,
-              price: parseFloat(item.node.originalTotalSet?.shopMoney?.amount || "0") / (item.node.quantity || 1)
-            })) || []
-          }));
-          
-          scanResult.metrics.cartAnalytics = {
-            totalCarts: totalCheckoutStarts,
-            cartsWithCheckout: completedCheckouts,
-            cartsWithoutCheckout: recentAbandonedCheckouts.length,
-            abandonedCarts: recentAbandonedCheckouts.length,
-            recoveryRate: `${(completedCheckouts / totalCheckoutStarts * 100).toFixed(1)}%`,
-            abandonmentRate: `${abandonmentRate}%`,
-            potentialRevenue: Math.round(potentialRevenue),
-            recoverableRevenue: Math.round(potentialRevenue * 0.2),
-            topAbandonedProducts: Object.values(abandonedProducts)
-              .sort((a, b) => b.totalValue - a.totalValue)
-              .slice(0, 5),
-            recentAbandonedCarts
-          };
-          
-          // Add checkout abandonment issue if rate is high
-          if (parseFloat(abandonmentRate) > 30) {
-            scanResult.checkoutAbandonmentIssues.push({
-              starts: totalCheckoutStarts,
-              completed: completedCheckouts,
-              abandonmentRate: `${abandonmentRate}%`,
-              insight: `${recentAbandonedCheckouts.length} customers abandoned checkout - $${Math.round(potentialRevenue).toLocaleString()} in lost revenue`
-            });
-          }
         }
-        
-      } catch (error) {
-        console.log("Abandoned checkouts not available:", error);
-      }
-
-      // ============ 5. THEMES - REAL DATA ============
-      console.log("🎨 Analyzing theme...");
-      try {
-        const themesQuery = await admin.graphql(`
-          query {
-            themes(first: 10) {
-              edges {
-                node {
-                  id
-                  name
-                  role
-                }
-              }
-            }
-          }
-        `);
-        
-        const themesData = await themesQuery.json();
-        const themes = themesData.data?.themes?.edges || [];
-        
-        const mainTheme = themes.find((t: any) => t.node.role === 'main');
-        scanResult.uxSpeedSignals.theme = mainTheme?.node.name || themes[0]?.node.name || "Custom";
-        scanResult.uxSpeedSignals.themeRole = mainTheme?.node.role || "unknown";
-        
-        const outdatedThemes = ["Debut", "Brooklyn", "Simple", "Minimal", "Supply", "Narrative"];
-        if (outdatedThemes.includes(scanResult.uxSpeedSignals.theme)) {
-          scanResult.uxSpeedSignals.insight = `Your theme (${scanResult.uxSpeedSignals.theme}) is outdated. Consider upgrading to Online Store 2.0.`;
-        } else {
-          scanResult.uxSpeedSignals.insight = `Your theme (${scanResult.uxSpeedSignals.theme}) is up to date.`;
-        }
-      } catch (error) {
-        console.log("Theme data not available");
-      }
-
-      // ============ 6. APPS - REAL INSTALLED APPS ============
-      console.log("📱 Detecting installed apps...");
-      try {
-        const appsQuery = await admin.graphql(`
-          query {
-            installedApplications(first: 50) {
-              edges {
-                node {
-                  id
-                  name
-                }
-              }
-            }
-          }
-        `);
-        
-        const appsData = await appsQuery.json();
-        const apps = appsData.data?.installedApplications?.edges || [];
-        
-        scanResult.uxSpeedSignals.appsDetected = apps.length;
-        scanResult.uxSpeedSignals.appNames = apps.map((a: any) => a.node.name);
-        
-      } catch (error) {
-        console.log("Apps data not available");
-        scanResult.uxSpeedSignals.appsDetected = 0;
-        scanResult.uxSpeedSignals.appNames = [];
-      }
-
-      // ============ 7. PAGES & TRUST SIGNALS - REAL DATA ============
-      console.log("🛡️ Checking trust signals...");
-      try {
-        const pagesQuery = await admin.graphql(`
-          query {
-            pages(first: 50) {
-              edges {
-                node {
-                  id
-                  title
-                  handle
-                  body
-                }
-              }
-            }
-          }
-        `);
-        
-        const pagesData = await pagesQuery.json();
-        const pages = pagesData.data?.pages?.edges || [];
-        const pageTitles = pages.map((p: any) => p.node.title.toLowerCase());
-        
-        const hasShipping = pageTitles.some((t: string) => t.includes('shipping') || t.includes('delivery'));
-        scanResult.trustGapIssues.push({
-          issue: "Shipping policy",
-          severity: "high",
-          found: hasShipping,
-          details: hasShipping ? "✓ Found" : "✗ Missing - Add shipping policy to build trust"
-        });
-        
-        const hasReturns = pageTitles.some((t: string) => t.includes('return') || t.includes('refund'));
-        scanResult.trustGapIssues.push({
-          issue: "Return policy",
-          severity: "high",
-          found: hasReturns,
-          details: hasReturns ? "✓ Found" : "✗ Missing - Add return policy to reduce purchase anxiety"
-        });
-        
-        const hasPrivacy = pageTitles.some((t: string) => t.includes('privacy'));
-        scanResult.trustGapIssues.push({
-          issue: "Privacy policy",
-          severity: "high",
-          found: hasPrivacy,
-          details: hasPrivacy ? "✓ Found" : "✗ Missing - Privacy policy is legally required"
-        });
-        
-        const hasAbout = pageTitles.some((t: string) => t.includes('about'));
-        scanResult.trustGapIssues.push({
-          issue: "About Us page",
-          severity: "medium",
-          found: hasAbout,
-          details: hasAbout ? "✓ Found" : "✗ Missing - Add About Us page to build brand trust"
-        });
-        
-        const hasFaq = pageTitles.some((t: string) => t.includes('faq') || t.includes('questions'));
-        scanResult.trustGapIssues.push({
-          issue: "FAQ page",
-          severity: "medium",
-          found: hasFaq,
-          details: hasFaq ? "✓ Found" : "✗ Missing - FAQ page answers common questions"
-        });
-        
-      } catch (error) {
-        console.log("Pages data not available");
-      }
-
-      // ============ 8. TRACKING HEALTH - REAL DETECTION ============
-      console.log("📊 Auditing tracking setup...");
+      });
       
-      try {
-        const themeQuery = await admin.graphql(`
-          query {
-            theme(id: "main") {
-              id
-              name
-              files(patterns: ["layout/theme.liquid", "snippets/*.liquid"]) {
-                edges {
-                  node {
-                    filename
-                    body
-                  }
-                }
-              }
-            }
-          }
-        `);
-        
-        const themeData = await themeQuery.json();
-        const files = themeData.data?.theme?.files?.edges || [];
-        
-        let hasPixel = false;
-        let hasPurchaseEvent = false;
-        
-        for (const file of files) {
-          const content = file.node.body || "";
-          if (content.includes('fbq(') || content.includes('connect.facebook.net')) {
-            hasPixel = true;
-          }
-          if (content.includes('Purchase') || content.includes('AddPaymentInfo')) {
-            hasPurchaseEvent = true;
-          }
-        }
-        
-        scanResult.trackingHealthIssues.push({
-          issue: "Meta Pixel",
-          severity: "high",
-          found: hasPixel,
-          details: hasPixel ? "✓ Detected in theme" : "✗ Not detected - Install Meta Pixel for better ad tracking"
-        });
-        
-        scanResult.trackingHealthIssues.push({
-          issue: "Purchase events",
-          severity: "high",
-          found: hasPurchaseEvent,
-          details: hasPurchaseEvent ? "✓ Purchase events detected" : "✗ Not found - Check tracking setup"
-        });
-        
-      } catch (error) {
-        scanResult.trackingHealthIssues.push({
-          issue: "Meta Pixel",
-          severity: "medium",
-          found: false,
-          details: "Unable to verify - manually check tracking setup"
-        });
-      }
-      
-      scanResult.trackingHealthIssues.push({
-        issue: "Conversion API (CAPI)",
-        severity: "medium",
-        found: false,
-        details: "CAPI not configured - Recommended for accurate tracking"
+      const productStats: ProductStats = {
+        totalProducts: products.length,
+        missingImages,
+        missingDescriptions,
+        missingTitles,
+        missingReviews,
+        productsWithIssues: productsWithIssues.slice(0, 10) // Show only first 10 issues
+      };
+
+      console.log("📊 Product Stats:", {
+        total: products.length,
+        missingImages,
+        missingDescriptions,
+        missingTitles,
+        missingReviews
       });
 
-      // ============ 9. CALCULATE REAL SCORE ============
-      console.log("⚖️ Calculating revenue leak score...");
-      let score = 100;
-      
-      if (scanResult.metrics.totalProductsWithoutImages > 0) {
-        score -= Math.min(15, scanResult.metrics.totalProductsWithoutImages * 2);
-      }
-      
-      if (scanResult.metrics.totalProductsWithoutDescription > 0) {
-        score -= Math.min(10, scanResult.metrics.totalProductsWithoutDescription);
-      }
-      
-      const missingHighTrust = scanResult.trustGapIssues.filter(i => !i.found && i.severity === 'high').length;
-      score -= missingHighTrust * 8;
-      
-      const abandonmentRate = parseFloat(scanResult.metrics.cartAnalytics.abandonmentRate);
-      if (abandonmentRate > 70) score -= 20;
-      else if (abandonmentRate > 50) score -= 15;
-      else if (abandonmentRate > 30) score -= 10;
-      else if (abandonmentRate > 20) score -= 5;
-      
-      const missingTracking = scanResult.trackingHealthIssues.filter(i => !i.found && i.severity === 'high').length;
-      score -= missingTracking * 10;
-      
-      if (scanResult.uxSpeedSignals.theme.includes('Debut') || scanResult.uxSpeedSignals.theme.includes('Brooklyn')) {
-        score -= 10;
-      }
-      
-      score = Math.max(0, Math.min(100, Math.round(score)));
-      
-      let grade = "A";
-      if (score < 50) grade = "D";
-      else if (score < 60) grade = "D+";
-      else if (score < 65) grade = "C-";
-      else if (score < 70) grade = "C";
-      else if (score < 75) grade = "C+";
-      else if (score < 80) grade = "B-";
-      else if (score < 85) grade = "B";
-      else if (score < 90) grade = "B+";
-      else if (score < 95) grade = "A-";
-      else grade = "A";
-      
-      scanResult.metrics.score = score;
-      scanResult.metrics.grade = grade;
-      
-      const lossPercentage = (100 - score) / 100;
-      scanResult.metrics.estimatedMonthlyLoss = Math.round(scanResult.metrics.totalRevenue * lossPercentage);
+      const totalCarts = completedOrdersList.length + abandonedCartsList.length;
+      const abandonmentRate = totalCarts > 0 
+        ? ((abandonedCartsList.length / totalCarts) * 100).toFixed(1) + "%" 
+        : "0%";
+      const completionRate = totalCarts > 0 
+        ? ((completedOrdersList.length / totalCarts) * 100).toFixed(1) + "%" 
+        : "0%";
 
-      // ============ 10. GENERATE TOP 5 ISSUES ============
-      console.log("📋 Generating top issues...");
-      
-      if (parseFloat(scanResult.metrics.cartAnalytics.abandonmentRate) > 30) {
-        scanResult.topIssues.push(`Checkout abandonment: ${scanResult.metrics.cartAnalytics.abandonmentRate} ($${scanResult.metrics.cartAnalytics.potentialRevenue.toLocaleString()} lost)`);
-      }
-      
-      if (scanResult.metrics.cartAnalytics.recentAbandonedCarts.filter(c => c.isLoggedIn).length > 0) {
-        scanResult.topIssues.push(`${scanResult.metrics.cartAnalytics.recentAbandonedCarts.filter(c => c.isLoggedIn).length} logged-in customers abandoned cart - Ready to email`);
-      }
-      
-      if (scanResult.metrics.totalProductsWithoutImages > 0) {
-        scanResult.topIssues.push(`${scanResult.metrics.totalProductsWithoutImages} product(s) missing images`);
-      }
-      
-      if (scanResult.metrics.totalProductsWithoutDescription > 0) {
-        scanResult.topIssues.push(`${scanResult.metrics.totalProductsWithoutDescription} product(s) missing descriptions`);
-      }
-      
-      const missingPolicies = scanResult.trustGapIssues
-        .filter(i => !i.found && i.severity === 'high')
-        .map(i => i.issue.replace(' policy', ''))
-        .slice(0, 2);
-      
-      if (missingPolicies.length > 0) {
-        scanResult.topIssues.push(`Missing ${missingPolicies.join(' & ')} policies`);
-      }
-      
-      scanResult.topIssues = scanResult.topIssues.slice(0, 5);
+      console.log("📊 FINAL STATS:", {
+        totalCarts,
+        abandoned: abandonedCartsList.length,
+        completed: completedOrdersList.length,
+        abandonedWithEmail,
+        guestAbandoned: guestAbandonedCarts.length,
+        potentialRevenue
+      });
 
-      console.log("✅ Scan completed!");
-      console.log(`📊 Score: ${score}/100, Grade: ${grade}`);
-      console.log(`🛒 Abandoned Checkouts: ${scanResult.metrics.cartAnalytics.abandonedCarts}`);
-      console.log(`💰 Potential Revenue: $${scanResult.metrics.cartAnalytics.potentialRevenue.toLocaleString()}`);
-      
+      const scanResult: ScanResult = {
+        scanned: true,
+        scanId: `scan_${Date.now()}`,
+        scanDate: new Date().toISOString(),
+        metrics: {
+          shopName,
+          totalOrders: completedOrdersList.length,
+          totalRevenue: Math.round(completedRevenue),
+          cartAnalytics: {
+            totalCarts,
+            abandonedCarts: abandonedCartsList.length,
+            completedCarts: completedOrdersList.length,
+            abandonmentRate,
+            completionRate,
+            potentialRevenue: Math.round(potentialRevenue),
+            completedRevenue: Math.round(completedRevenue),
+            recoverableRevenue: Math.round(potentialRevenue * 0.2),
+            abandonedCartsList,
+            completedOrdersList,
+            guestAbandonedCarts,
+            topAbandonedProducts,
+            productConversions,
+            missingPages,
+            productStats,
+            dateRange: { startDate, endDate }
+          }
+        }
+      };
+
+      console.log("✅ SCAN COMPLETE!");
       return scanResult;
 
     } catch (error) {
       console.error("❌ Scan error:", error);
       return {
-        ...scanResult,
         scanned: false,
-        error: "Failed to scan store. Please try again.",
+        error: error instanceof Error ? error.message : "Failed to scan store"
       };
     }
   }
 
-  return null;
-};
+  return { scanned: false };
+}
 
-/* ---------------- DASHBOARD UI ---------------- */
+// Helper functions for default dates
+function getDefaultStartDate(): string {
+  const date = new Date();
+  date.setDate(date.getDate() - 30);
+  return date.toISOString().split('T')[0];
+}
+
+function getDefaultEndDate(): string {
+  return new Date().toISOString().split('T')[0];
+}
+
+/* ---------------- MAIN UI ---------------- */
 export default function Index() {
   const fetcher = useFetcher<ScanResult>();
   const [scanProgress, setScanProgress] = useState(0);
   const [scanStep, setScanStep] = useState("");
+  const [savedResult, setSavedResult] = useState<ScanResult | null>(null);
+  const [startDate, setStartDate] = useState(getDefaultStartDate);
+  const [endDate, setEndDate] = useState(getDefaultEndDate);
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [showStartScreen, setShowStartScreen] = useState(false);
+  
   const isScanning = fetcher.state === "submitting";
 
-  const scanData = fetcher.data?.scanned ? fetcher.data : null;
-  const errorData = fetcher.data?.scanned === false ? fetcher.data : null;
+  // Load saved results from localStorage on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        setSavedResult(parsed);
+        setShowStartScreen(false);
+        console.log("📂 Loaded saved scan results from:", parsed.scanDate);
+      } else {
+        setShowStartScreen(true);
+      }
+    } catch (error) {
+      console.error("Error loading saved results:", error);
+      setShowStartScreen(true);
+    }
+  }, []);
 
-  // Progress simulation
+  // Save results to localStorage when scan completes
+  useEffect(() => {
+    if (fetcher.data?.scanned) {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(fetcher.data));
+        setSavedResult(fetcher.data);
+        setShowStartScreen(false);
+        console.log("💾 Saved scan results to localStorage");
+      } catch (error) {
+        console.error("Error saving results:", error);
+      }
+    }
+  }, [fetcher.data]);
+
   useEffect(() => {
     if (!isScanning) {
       setScanProgress(0);
@@ -899,16 +890,13 @@ export default function Index() {
     }
 
     const steps = [
-      "🔍 Initializing scanner...",
-      "🏪 Fetching store information...",
-      "📦 Scanning products and images...",
-      "💰 Analyzing orders and revenue...",
-      "🛒 Analyzing abandoned checkouts...",
-      "🎨 Analyzing theme performance...",
-      "📱 Detecting installed apps...",
-      "🛡️ Checking trust signals...",
-      "📈 Auditing tracking setup...",
-      "⚖️ Calculating your score..."
+      "🔍 Initializing...",
+      "🏪 Fetching store info...",
+      "📦 Scanning orders...",
+      "🛒 Checking abandoned carts...",
+      "📄 Checking pages...",
+      "📧 Processing customer data...",
+      "⚖️ Calculating metrics..."
     ];
 
     let currentStep = 0;
@@ -917,60 +905,146 @@ export default function Index() {
         setScanStep(steps[currentStep]);
         setScanProgress(((currentStep + 1) / steps.length) * 100);
         currentStep++;
-      } else {
-        clearInterval(interval);
-        setScanProgress(100);
       }
-    }, 900);
+    }, 800);
 
     return () => clearInterval(interval);
   }, [isScanning]);
 
-  const handlePrintReport = () => {
-    window.open(`${window.location.pathname}?mode=pdf&t=${Date.now()}`, '_blank');
+  const handleScan = () => {
+    const formData = new FormData();
+    formData.append("startDate", startDate);
+    formData.append("endDate", endDate);
+    fetcher.submit(formData, { method: "POST" });
   };
 
-  if (!scanData && !isScanning && !errorData) {
+  const handleClearSaved = () => {
+    localStorage.removeItem(STORAGE_KEY);
+    setSavedResult(null);
+    setShowStartScreen(true);
+  };
+
+  const handleNewScan = () => {
+    setShowStartScreen(true);
+  };
+
+  // Use either current scan data or saved results
+  const displayData = fetcher.data?.scanned ? fetcher.data : savedResult;
+  const errorData = fetcher.data?.scanned === false ? fetcher.data : null;
+
+  // Show start screen if no data and not scanning
+  if (showStartScreen && !isScanning && !errorData) {
     return (
-      <div style={{ maxWidth: '800px', margin: '2rem auto', padding: '2rem', textAlign: 'center' }}>
-        <h1 style={{ fontSize: '2rem', color: '#008060', marginBottom: '1rem' }}>
-          Shopify Revenue Leak Scanner
+      <div style={{ 
+        maxWidth: '800px', 
+        margin: '4rem auto', 
+        padding: '3rem', 
+        textAlign: 'center',
+        background: 'white',
+        borderRadius: '24px',
+        boxShadow: '0 4px 12px rgba(0,0,0,0.1)'
+      }}>
+        <h1 style={{ fontSize: '2.5rem', color: '#008060', marginBottom: '1rem' }}>
+          Revenue Leak Scanner
         </h1>
         <p style={{ fontSize: '1.2rem', color: '#5C5F62', marginBottom: '2rem' }}>
-          Find where your store is leaking money — before you spend more on ads.
+          Find abandoned carts, missing pages, and recover lost revenue
         </p>
+        
+        {/* Date Range Picker */}
+        <div style={{ 
+          background: '#F6F6F7', 
+          padding: '1.5rem', 
+          borderRadius: '12px', 
+          marginBottom: '2rem',
+          textAlign: 'left'
+        }}>
+          <h3 style={{ marginBottom: '1rem', color: '#008060' }}>📅 Select Date Range</h3>
+          <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+            <div style={{ flex: 1 }}>
+              <label style={{ display: 'block', fontSize: '0.9rem', marginBottom: '0.5rem' }}>Start Date</label>
+              <input
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '0.75rem',
+                  border: '1px solid #8A9199',
+                  borderRadius: '8px',
+                  fontSize: '1rem'
+                }}
+              />
+            </div>
+            <div style={{ flex: 1 }}>
+              <label style={{ display: 'block', fontSize: '0.9rem', marginBottom: '0.5rem' }}>End Date</label>
+              <input
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '0.75rem',
+                  border: '1px solid #8A9199',
+                  borderRadius: '8px',
+                  fontSize: '1rem'
+                }}
+              />
+            </div>
+          </div>
+          <p style={{ fontSize: '0.8rem', color: '#5C5F62', marginTop: '0.5rem' }}>
+            Data will be scanned for the selected date range
+          </p>
+        </div>
+
         <button
-          onClick={() => fetcher.submit({}, { method: "POST" })}
+          onClick={handleScan}
+          disabled={isScanning}
           style={{
-            backgroundColor: '#008060',
+            background: '#008060',
             color: 'white',
             border: 'none',
-            borderRadius: '8px',
-            padding: '1rem 3rem',
-            fontSize: '1.2rem',
+            borderRadius: '40px',
+            padding: '1rem 4rem',
+            fontSize: '1.3rem',
             fontWeight: '600',
-            cursor: 'pointer'
+            cursor: isScanning ? 'not-allowed' : 'pointer',
+            opacity: isScanning ? 0.7 : 1,
+            boxShadow: '0 4px 8px rgba(0,128,96,0.3)'
           }}
         >
-          Start Free Scan
+          {isScanning ? 'Scanning...' : 'Start Scan'}
         </button>
         <p style={{ marginTop: '2rem', color: '#8A9199', fontSize: '0.9rem' }}>
-          🔒 Read-only access • We never modify your store • Takes 30-60 seconds
+          🔒 Read-only • We never modify your store • Results are saved
         </p>
       </div>
     );
   }
 
   return (
-    <div style={{ maxWidth: '1400px', margin: '0 auto', padding: '2rem 1rem' }}>
+    <div style={{ maxWidth: '1400px', margin: '0 auto', padding: '2rem' }}>
       
       {/* Scanning Progress */}
       {isScanning && (
-        <div style={{ background: '#F6F6F7', borderRadius: '12px', padding: '2rem', marginBottom: '2rem' }}>
-          <h2 style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>🔍 Scanning Your Store</h2>
-          <p style={{ color: '#008060', fontWeight: '500', marginBottom: '1rem' }}>{scanStep}</p>
-          <div style={{ height: '8px', background: '#E4E5E7', borderRadius: '4px' }}>
-            <div style={{ width: `${scanProgress}%`, height: '100%', background: '#008060', borderRadius: '4px', transition: 'width 0.3s' }} />
+        <div style={{ 
+          background: 'white', 
+          borderRadius: '16px', 
+          padding: '2rem', 
+          marginBottom: '2rem',
+          boxShadow: '0 2px 8px rgba(0,0,0,0.05)'
+        }}>
+          <h2 style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>{scanStep}</h2>
+          <div style={{ height: '10px', background: '#E4E5E7', borderRadius: '5px' }}>
+            <div 
+              style={{ 
+                width: `${scanProgress}%`, 
+                height: '100%', 
+                background: '#008060', 
+                borderRadius: '5px',
+                transition: 'width 0.3s'
+              }} 
+            />
           </div>
           <p style={{ marginTop: '1rem', color: '#5C5F62' }}>{Math.round(scanProgress)}% complete</p>
         </div>
@@ -978,222 +1052,371 @@ export default function Index() {
 
       {/* Error State */}
       {errorData && (
-        <div style={{ background: '#FFF4F4', borderRadius: '12px', padding: '2rem', marginBottom: '2rem', border: '1px solid #E0B3B2' }}>
-          <h2 style={{ color: '#D82C0D', marginBottom: '0.5rem' }}>⚠️ Scan Failed</h2>
-          <p style={{ color: '#D82C0D', marginBottom: '1rem' }}>{errorData.error}</p>
-          <button onClick={() => fetcher.submit({}, { method: "POST" })} style={{ background: '#D82C0D', color: 'white', border: 'none', borderRadius: '6px', padding: '0.75rem 1.5rem', cursor: 'pointer' }}>
+        <div style={{ 
+          background: '#FFF4F4', 
+          padding: '2rem', 
+          borderRadius: '16px', 
+          color: '#D82C0D',
+          marginBottom: '2rem'
+        }}>
+          <h3>❌ Error: {errorData.error}</h3>
+          <button
+            onClick={handleScan}
+            style={{
+              marginTop: '1rem',
+              padding: '0.75rem 2rem',
+              background: '#D82C0D',
+              color: 'white',
+              border: 'none',
+              borderRadius: '8px',
+              cursor: 'pointer'
+            }}
+          >
             Try Again
           </button>
         </div>
       )}
 
       {/* Results */}
-      {scanData && (
+      {displayData && displayData.metrics && (
         <div>
-          {/* Header */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem', flexWrap: 'wrap' }}>
+          {/* Header with Date Range and Scan Info */}
+          <div style={{ 
+            display: 'flex', 
+            justifyContent: 'space-between', 
+            alignItems: 'center',
+            marginBottom: '2rem',
+            flexWrap: 'wrap',
+            gap: '1rem',
+            background: '#F6F6F7',
+            padding: '1.5rem',
+            borderRadius: '12px'
+          }}>
             <div>
-              <h1 style={{ fontSize: '2rem', color: '#008060', marginBottom: '0.25rem' }}>
-                {scanData.metrics.shopName}
+              <h1 style={{ fontSize: '2rem', color: '#008060', marginBottom: '0.5rem' }}>
+                {displayData.metrics.shopName}
               </h1>
-              <p style={{ color: '#5C5F62' }}>
-                📍 Scanned: {new Date(scanData.metrics.scanDate).toLocaleString()}
-              </p>
+              <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap' }}>
+                <p style={{ color: '#5C5F62' }}>
+                  📅 {displayData.metrics.cartAnalytics?.dateRange ? 
+                    `${new Date(displayData.metrics.cartAnalytics.dateRange.startDate).toLocaleDateString()} - ${new Date(displayData.metrics.cartAnalytics.dateRange.endDate).toLocaleDateString()}` 
+                    : 'No date range'}
+                </p>
+                <p style={{ color: '#5C5F62' }}>
+                  📍 {displayData.metrics.totalOrders} orders • ${displayData.metrics.totalRevenue.toLocaleString()} revenue
+                </p>
+                <p style={{ color: '#5C5F62' }}>
+                  🕐 Scanned: {new Date(displayData.scanDate).toLocaleString()}
+                </p>
+              </div>
             </div>
             <div style={{ display: 'flex', gap: '1rem' }}>
-              {/* <button onClick={handlePrintReport} style={{ padding: '0.75rem 1.5rem', background: 'white', border: '1px solid #8A9199', borderRadius: '6px', cursor: 'pointer' }}>
-                📄 Print Report
-              </button> */}
-              <button onClick={() => fetcher.submit({}, { method: "POST" })} style={{ padding: '0.75rem 1.5rem', background: '#008060', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer' }}>
-                Scan Again
+              <button
+                onClick={() => setShowDatePicker(!showDatePicker)}
+                style={{
+                  padding: '0.75rem 1.5rem',
+                  background: 'white',
+                  color: '#008060',
+                  border: '1px solid #008060',
+                  borderRadius: '40px',
+                  fontSize: '1rem',
+                  fontWeight: '600',
+                  cursor: 'pointer'
+                }}
+              >
+                📅 Change Dates
+              </button>
+              <button
+                onClick={handleNewScan}
+                style={{
+                  padding: '0.75rem 2rem',
+                  background: '#008060',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '40px',
+                  fontSize: '1rem',
+                  fontWeight: '600',
+                  cursor: 'pointer'
+                }}
+              >
+                New Scan
+              </button>
+              <button
+                onClick={handleClearSaved}
+                style={{
+                  padding: '0.75rem 1.5rem',
+                  background: '#D82C0D',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '40px',
+                  fontSize: '1rem',
+                  fontWeight: '600',
+                  cursor: 'pointer'
+                }}
+              >
+                Clear Saved
               </button>
             </div>
           </div>
 
-          {/* Score Card */}
-          <div style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap', marginBottom: '2rem' }}>
+          {/* Date Range Picker (collapsible) */}
+          {showDatePicker && (
             <div style={{ 
-              flex: '2', 
-              minWidth: '300px',
-              background: scanData.metrics.score >= 80 ? 'linear-gradient(135deg, #008060, #006E52)' :
-                         scanData.metrics.score >= 60 ? 'linear-gradient(135deg, #FFC58B, #FDB13D)' :
-                         'linear-gradient(135deg, #D82C0D, #B6260B)',
-              borderRadius: '16px',
-              padding: '2rem',
-              color: 'white'
+              background: 'white', 
+              padding: '1.5rem', 
+              borderRadius: '12px', 
+              marginBottom: '2rem',
+              border: '1px solid #E4E5E7'
             }}>
-              <p style={{ fontSize: '0.9rem', opacity: 0.9, marginBottom: '0.5rem' }}>Revenue Leak Score</p>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem' }}>
-                <span style={{ fontSize: '4rem', fontWeight: '700' }}>{scanData.metrics.score}</span>
-                <span style={{ fontSize: '1.5rem', opacity: 0.9 }}>/100</span>
+              <h3 style={{ marginBottom: '1rem' }}>📅 Select New Date Range</h3>
+              <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                <div style={{ flex: 1 }}>
+                  <label style={{ display: 'block', fontSize: '0.9rem', marginBottom: '0.5rem' }}>Start Date</label>
+                  <input
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '0.75rem',
+                      border: '1px solid #8A9199',
+                      borderRadius: '8px',
+                      fontSize: '1rem'
+                    }}
+                  />
+                </div>
+                <div style={{ flex: 1 }}>
+                  <label style={{ display: 'block', fontSize: '0.9rem', marginBottom: '0.5rem' }}>End Date</label>
+                  <input
+                    type="date"
+                    value={endDate}
+                    onChange={(e) => setEndDate(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '0.75rem',
+                      border: '1px solid #8A9199',
+                      borderRadius: '8px',
+                      fontSize: '1rem'
+                    }}
+                  />
+                </div>
+                <button
+                  onClick={handleScan}
+                  disabled={isScanning}
+                  style={{
+                    padding: '0.75rem 2rem',
+                    background: '#008060',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '40px',
+                    fontSize: '1rem',
+                    fontWeight: '600',
+                    cursor: isScanning ? 'not-allowed' : 'pointer',
+                    opacity: isScanning ? 0.7 : 1
+                  }}
+                >
+                  {isScanning ? 'Scanning...' : 'Scan with New Dates'}
+                </button>
               </div>
-              <span style={{ display: 'inline-block', marginTop: '0.75rem', padding: '0.25rem 1rem', background: 'rgba(255,255,255,0.2)', borderRadius: '20px' }}>
-                Grade: {scanData.metrics.grade}
-              </span>
             </div>
-            
-            <div style={{ flex: '1', minWidth: '250px', background: 'white', borderRadius: '16px', border: '1px solid #E4E5E7', padding: '2rem' }}>
-              <p style={{ color: '#5C5F62', marginBottom: '0.5rem' }}>Estimated Monthly Loss</p>
-              <p style={{ fontSize: '2.5rem', fontWeight: '700', color: '#D82C0D' }}>
-                ${scanData.metrics.estimatedMonthlyLoss.toLocaleString()}
-              </p>
-              <p style={{ color: '#5C5F62', fontSize: '0.9rem', marginTop: '0.5rem' }}>
-                Based on your last 30 days revenue (${scanData.metrics.totalRevenue.toLocaleString()})
-              </p>
-            </div>
-          </div>
+          )}
 
-          {/* Store Stats Grid */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginBottom: '2rem' }}>
-            <div style={{ background: 'white', borderRadius: '12px', border: '1px solid #E4E5E7', padding: '1.25rem' }}>
-              <p style={{ fontSize: '0.8rem', color: '#5C5F62', marginBottom: '0.25rem' }}>📦 PRODUCTS</p>
-              <p style={{ fontSize: '1.75rem', fontWeight: '600' }}>{scanData.metrics.totalProducts}</p>
-              <p style={{ fontSize: '0.8rem', color: scanData.metrics.totalProductsWithoutImages > 0 ? '#D82C0D' : '#50B83C' }}>
-                {scanData.metrics.totalProductsWithoutImages > 0 
-                  ? `${scanData.metrics.totalProductsWithoutImages} missing images` 
-                  : '✓ All products have images'}
-              </p>
-            </div>
-            
-            <div style={{ background: 'white', borderRadius: '12px', border: '1px solid #E4E5E7', padding: '1.25rem' }}>
-              <p style={{ fontSize: '0.8rem', color: '#5C5F62', marginBottom: '0.25rem' }}>💰 REVENUE (30D)</p>
-              <p style={{ fontSize: '1.75rem', fontWeight: '600' }}>${scanData.metrics.totalRevenue.toLocaleString()}</p>
-              <p style={{ fontSize: '0.8rem', color: '#5C5F62' }}>{scanData.metrics.totalOrders} orders</p>
-            </div>
-            
-            <div style={{ background: 'white', borderRadius: '12px', border: '1px solid #E4E5E7', padding: '1.25rem' }}>
-              <p style={{ fontSize: '0.8rem', color: '#5C5F62', marginBottom: '0.25rem' }}>📱 INSTALLED APPS</p>
-              <p style={{ fontSize: '1.75rem', fontWeight: '600' }}>{scanData.uxSpeedSignals.appsDetected}</p>
-              <p style={{ fontSize: '0.8rem', color: '#5C5F62' }}>
-                {scanData.uxSpeedSignals.appNames.slice(0, 2).join(', ')}
-                {scanData.uxSpeedSignals.appNames.length > 2 ? '...' : ''}
-              </p>
-            </div>
-            
-            <div style={{ background: 'white', borderRadius: '12px', border: '1px solid #E4E5E7', padding: '1.25rem' }}>
-              <p style={{ fontSize: '0.8rem', color: '#5C5F62', marginBottom: '0.25rem' }}>🎨 THEME</p>
-              <p style={{ fontSize: '1.25rem', fontWeight: '600' }}>{scanData.uxSpeedSignals.theme}</p>
-              <p style={{ fontSize: '0.8rem', color: '#5C5F62' }}>{scanData.uxSpeedSignals.insight}</p>
-            </div>
-          </div>
+          {/* Stats Cards */}
+          {displayData.metrics.cartAnalytics && (
+            <>
+              <div style={{ 
+                display: 'grid', 
+                gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', 
+                gap: '1.5rem', 
+                marginBottom: '2rem' 
+              }}>
+                <div style={{ 
+                  background: 'linear-gradient(135deg, #008060, #006E52)',
+                  color: 'white',
+                  padding: '1.5rem',
+                  borderRadius: '16px',
+                  boxShadow: '0 4px 12px rgba(0,128,96,0.2)'
+                }}>
+                  <p style={{ fontSize: '0.9rem', opacity: 0.9, marginBottom: '0.5rem' }}>📊 Checkout Summary</p>
+                  <p style={{ fontSize: '2.5rem', fontWeight: '700' }}>{displayData.metrics.cartAnalytics.totalCarts}</p>
+                  <p>
+                    {displayData.metrics.cartAnalytics.completedCarts} completed • {displayData.metrics.cartAnalytics.abandonedCarts} abandoned
+                  </p>
+                </div>
+                
+                <div style={{ 
+                  background: 'white',
+                  padding: '1.5rem',
+                  borderRadius: '16px',
+                  border: '1px solid #E4E5E7',
+                  boxShadow: '0 2px 8px rgba(0,0,0,0.05)'
+                }}>
+                  <p style={{ fontSize: '0.9rem', color: '#5C5F62', marginBottom: '0.5rem' }}>📧 Login Customer</p>
+                  <p style={{ fontSize: '2.5rem', fontWeight: '700', color: '#008060' }}>
+                    {displayData.metrics.cartAnalytics.abandonedCartsList?.filter(c => c.customerEmail).length + 
+                     displayData.metrics.cartAnalytics.completedOrdersList?.filter(c => c.customerEmail).length}
+                  </p>
+                  <p style={{ color: '#5C5F62' }}>
+                    {displayData.metrics.cartAnalytics.abandonedCartsList?.filter(c => c.customerEmail).length} abandoned • 
+                    {displayData.metrics.cartAnalytics.completedOrdersList?.filter(c => c.customerEmail).length} completed
+                  </p>
+                </div>
+                
+                <div style={{ 
+                  background: 'white',
+                  padding: '1.5rem',
+                  borderRadius: '16px',
+                  border: '1px solid #E4E5E7',
+                  boxShadow: '0 2px 8px rgba(0,0,0,0.05)'
+                }}>
+                  <p style={{ fontSize: '0.9rem', color: '#5C5F62', marginBottom: '0.5rem' }}>👤 Guest Customer</p>
+                  <p style={{ fontSize: '2.5rem', fontWeight: '700', color: '#D82C0D' }}>
+                    {displayData.metrics.cartAnalytics.guestAbandonedCarts?.length || 0}
+                  </p>
+                  <p style={{ color: '#5C5F62' }}>
+                    ${displayData.metrics.cartAnalytics.guestAbandonedCarts?.reduce((sum, c) => sum + c.totalPrice, 0).toLocaleString() || 0} at risk
+                  </p>
+                </div>
+              </div>
 
-          {/* ============ IMPORT CART ABANDONMENT DASHBOARD ============ */}
-          <CartAbandonmentDashboard 
-            cartAnalytics={scanData.metrics.cartAnalytics}
-            checkoutFunnel={scanData.metrics.checkoutFunnel}
-          />
+              {/* Pass data to CartAbandonmentDashboard */}
+              <CartAbandonmentDashboard 
+                cartAnalytics={displayData.metrics.cartAnalytics}
+                checkoutFunnel={{
+                  totalCheckoutStarts: displayData.metrics.cartAnalytics.totalCarts,
+                  checkoutsCompleted: displayData.metrics.cartAnalytics.completedCarts,
+                  checkoutsAbandoned: displayData.metrics.cartAnalytics.abandonedCarts,
+                  completionRate: displayData.metrics.cartAnalytics.completionRate,
+                  abandonmentRate: displayData.metrics.cartAnalytics.abandonmentRate,
+                  averageOrderValue: displayData.metrics.totalRevenue / (displayData.metrics.totalOrders || 1),
+                  purchasesAfterCheckout: displayData.metrics.totalOrders,
+                  purchasesAfterReminder: Math.round(displayData.metrics.cartAnalytics.abandonedCarts * 0.18),
+                  conversionRate: displayData.metrics.cartAnalytics.completionRate,
+                  checkoutSteps: [],
+                  dailyFunnel: []
+                }}
+              />
 
-          {/* Top 5 Issues */}
-          {scanData.topIssues.length > 0 && (
-            <div style={{ background: 'white', borderRadius: '16px', border: '1px solid #E4E5E7', padding: '2rem', marginBottom: '2rem' }}>
-              <h2 style={{ fontSize: '1.5rem', marginBottom: '1.5rem' }}>🔥 Top Revenue Leaks</h2>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                {scanData.topIssues.map((issue, i) => (
-                  <div key={i} style={{ 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    gap: '1rem',
-                    padding: '1rem',
-                    background: i === 0 ? '#FFF4F4' : '#F6F6F7',
-                    borderRadius: '8px',
-                    borderLeft: `4px solid ${i === 0 ? '#D82C0D' : i === 1 ? '#FFC58B' : '#8A9199'}`
+              {/* Product Stats Section */}
+              {displayData.metrics.cartAnalytics.productStats && (
+                <div style={{ 
+                  background: 'white', 
+                  borderRadius: '16px', 
+                  border: '1px solid #E4E5E7', 
+                  padding: '2rem', 
+                  marginTop: '2rem',
+                  marginBottom: '2rem'
+                }}>
+                  <h2 style={{ fontSize: '1.5rem', marginBottom: '1.5rem' }}>📦 Product Health Overview</h2>
+                  
+                  {/* Summary Stats */}
+                  <div style={{ 
+                    display: 'grid', 
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', 
+                    gap: '1rem', 
+                    marginBottom: '2rem' 
                   }}>
-                    <span style={{ 
-                      width: '28px', 
-                      height: '28px', 
-                      background: i === 0 ? '#D82C0D' : '#8A9199',
-                      color: 'white',
-                      borderRadius: '50%',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontWeight: 'bold'
-                    }}>
-                      {i + 1}
-                    </span>
-                    <span style={{ fontWeight: '500' }}>{issue}</span>
+                    <StatCardSmall 
+                      label="Total Products" 
+                      value={displayData.metrics.cartAnalytics.productStats.totalProducts} 
+                      color="#008060"
+                    />
+                    <StatCardSmall 
+                      label="Missing Images" 
+                      value={displayData.metrics.cartAnalytics.productStats.missingImages} 
+                      color={displayData.metrics.cartAnalytics.productStats.missingImages > 0 ? '#D82C0D' : '#50B83C'}
+                    />
+                    <StatCardSmall 
+                      label="Missing Descriptions" 
+                      value={displayData.metrics.cartAnalytics.productStats.missingDescriptions} 
+                      color={displayData.metrics.cartAnalytics.productStats.missingDescriptions > 0 ? '#D82C0D' : '#50B83C'}
+                    />
+                    <StatCardSmall 
+                      label="Missing Titles" 
+                      value={displayData.metrics.cartAnalytics.productStats.missingTitles} 
+                      color={displayData.metrics.cartAnalytics.productStats.missingTitles > 0 ? '#D82C0D' : '#50B83C'}
+                    />
+                    <StatCardSmall 
+                      label="Missing Reviews" 
+                      value={displayData.metrics.cartAnalytics.productStats.missingReviews} 
+                      color={displayData.metrics.cartAnalytics.productStats.missingReviews > 0 ? '#FFC58B' : '#50B83C'}
+                    />
                   </div>
-                ))}
-              </div>
-            </div>
-          )}
 
-          {/* Trust Signals */}
-          {scanData.trustGapIssues.filter(i => !i.found).length > 0 && (
-            <div style={{ background: 'white', borderRadius: '16px', border: '1px solid #E4E5E7', padding: '2rem', marginBottom: '2rem' }}>
-              <h2 style={{ fontSize: '1.5rem', marginBottom: '1.5rem' }}>🛡️ Missing Trust Signals</h2>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1rem' }}>
-                {scanData.trustGapIssues.filter(i => !i.found).map((issue, i) => (
-                  <div key={i} style={{ padding: '1rem', background: '#FFF4F4', borderRadius: '8px', border: '1px solid #E0B3B2' }}>
-                    <p style={{ fontWeight: '600', color: '#D82C0D', marginBottom: '0.5rem' }}>⚠️ {issue.issue}</p>
-                    <p style={{ fontSize: '0.9rem', color: '#5C5F62' }}>{issue.details}</p>
+                  {/* Detailed Issues */}
+                  {displayData.metrics.cartAnalytics.productStats.productsWithIssues.length > 0 && (
+                    <div>
+                      <h3 style={{ fontSize: '1.2rem', marginBottom: '1rem' }}>Products with Issues</h3>
+                      <div style={{ display: 'grid', gap: '0.75rem' }}>
+                        {displayData.metrics.cartAnalytics.productStats.productsWithIssues.map((product, i) => (
+                          <div key={i} style={{ 
+                            padding: '1rem', 
+                            background: '#F6F6F7', 
+                            borderRadius: '8px',
+                            borderLeft: `4px solid ${product.missingImages || product.missingDescription ? '#D82C0D' : '#FFC58B'}`
+                          }}>
+                            <p style={{ fontWeight: '600', marginBottom: '0.5rem' }}>{product.title}</p>
+                            <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+                              {product.missingImages && <span style={{ color: '#D82C0D' }}>❌ No images</span>}
+                              {product.missingDescription && <span style={{ color: '#D82C0D' }}>❌ No description</span>}
+                              {product.missingTitle && <span style={{ color: '#D82C0D' }}>❌ No title</span>}
+                              {product.missingReviews && <span style={{ color: '#FFC58B' }}>⚠️ No reviews</span>}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Missing Pages Section */}
+              {displayData.metrics.cartAnalytics.missingPages?.filter(p => p.isMissing).length > 0 && (
+                <div style={{ 
+                  background: 'white', 
+                  borderRadius: '16px', 
+                  border: '1px solid #E4E5E7', 
+                  padding: '2rem', 
+                  marginTop: '2rem',
+                  marginBottom: '2rem'
+                }}>
+                  <h2 style={{ fontSize: '1.5rem', marginBottom: '1.5rem' }}>📄 Missing Important Pages</h2>
+                  <div style={{ display: 'grid', gap: '1rem' }}>
+                    {displayData.metrics.cartAnalytics.missingPages
+                      .filter(p => p.isMissing)
+                      .map((page, i) => (
+                        <div key={i} style={{ 
+                          padding: '1rem', 
+                          background: page.severity === 'high' ? '#FFF4F4' : '#F6F6F7',
+                          borderRadius: '8px',
+                          borderLeft: `4px solid ${page.severity === 'high' ? '#D82C0D' : '#FFC58B'}`
+                        }}>
+                          <p style={{ fontWeight: '600', marginBottom: '0.25rem' }}>⚠️ Missing: {page.pageType}</p>
+                          <p style={{ fontSize: '0.9rem', color: '#5C5F62' }}>{page.recommendation}</p>
+                        </div>
+                      ))}
                   </div>
-                ))}
-              </div>
-            </div>
+                </div>
+              )}
+            </>
           )}
-
-          {/* Tracking Issues */}
-          {scanData.trackingHealthIssues.filter(i => !i.found).length > 0 && (
-            <div style={{ background: 'white', borderRadius: '16px', border: '1px solid #E4E5E7', padding: '2rem', marginBottom: '2rem' }}>
-              <h2 style={{ fontSize: '1.5rem', marginBottom: '1.5rem' }}>📊 Tracking Issues</h2>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1rem' }}>
-                {scanData.trackingHealthIssues.filter(i => !i.found).map((issue, i) => (
-                  <div key={i} style={{ padding: '1rem', background: issue.severity === 'high' ? '#FFF4F4' : '#F6F6F7', borderRadius: '8px' }}>
-                    <p style={{ fontWeight: '600', color: issue.severity === 'high' ? '#D82C0D' : '#5C5F62', marginBottom: '0.5rem' }}>
-                      {issue.issue}
-                    </p>
-                    <p style={{ fontSize: '0.9rem', color: '#5C5F62' }}>{issue.details}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Products with no sales */}
-          {scanData.trafficConversionIssues.length > 0 && (
-            <div style={{ background: 'white', borderRadius: '16px', border: '1px solid #E4E5E7', padding: '2rem', marginBottom: '2rem' }}>
-              <h2 style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>📦 Products With No Sales</h2>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                {scanData.trafficConversionIssues.map((issue, i) => (
-                  <div key={i} style={{ padding: '1rem', background: '#FFF4F4', borderRadius: '8px' }}>
-                    <p style={{ fontWeight: '600', marginBottom: '0.25rem' }}>{issue.product}</p>
-                    <p style={{ fontSize: '0.9rem', color: '#D82C0D' }}>0 purchases • {issue.insight}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* No Issues Found */}
-          {scanData.topIssues.length === 0 && 
-           scanData.trustGapIssues.filter(i => !i.found).length === 0 && 
-           scanData.trackingHealthIssues.filter(i => !i.found).length === 0 && 
-           scanData.trafficConversionIssues.length === 0 && (
-            <div style={{ padding: '3rem', background: '#EFF7F5', borderRadius: '16px', textAlign: 'center' }}>
-              <span style={{ fontSize: '3rem', marginBottom: '1rem', display: 'block' }}>🎉</span>
-              <h2 style={{ fontSize: '1.5rem', color: '#006E52', marginBottom: '0.5rem' }}>
-                No Revenue Leaks Found!
-              </h2>
-              <p style={{ color: '#5C5F62' }}>
-                Your store is well-optimized. All trust signals are in place, tracking is configured, and products have images and descriptions.
-              </p>
-            </div>
-          )}
-
-          {/* Footer */}
-          <div style={{ marginTop: '2rem', padding: '1.5rem', background: '#F6F6F7', borderRadius: '12px', textAlign: 'center' }}>
-            <p style={{ color: '#5C5F62', fontSize: '0.9rem' }}>
-              Design and Developed by <a href="https://aspirelogics.com/" target="_blank" rel="noopener noreferrer" style={{ color: '#008060', fontWeight: '500' }}>Aspirelogics</a>
-            </p>
-            <p style={{ color: '#8A9199', fontSize: '0.8rem', marginTop: '0.5rem' }}>
-              All data is from your actual Shopify store • 100% read-only • No fake metrics
-            </p>
-          </div>
         </div>
       )}
     </div>
   );
 }
 
-export const headers: HeadersFunction = (args) => boundary.headers(args);
+// Small stat card component
+function StatCardSmall({ label, value, color }: { label: string; value: number; color: string }) {
+  return (
+    <div style={{ 
+      padding: '1rem', 
+      background: '#F6F6F7', 
+      borderRadius: '8px',
+      textAlign: 'center'
+    }}>
+      <p style={{ fontSize: '0.8rem', color: '#5C5F62', marginBottom: '0.25rem' }}>{label}</p>
+      <p style={{ fontSize: '1.5rem', fontWeight: '700', color }}>{value}</p>
+    </div>
+  );
+}
