@@ -20,6 +20,7 @@ type AbandonedCartItem = {
 
 type AbandonedCart = {
   id: string;
+  cartUrl?: string; // Changed from checkoutUrl
   customerEmail: string | null;
   customerFirstName: string | null;
   customerLastName: string | null;
@@ -104,6 +105,7 @@ type ScanResult = {
   error?: string;
   metrics: {
     shopName: string;
+    shopUrl?: string;
     totalOrders: number;
     totalRevenue: number;
     cartAnalytics: CartAnalytics;
@@ -139,44 +141,78 @@ export async function action({ request }: ActionFunctionArgs) {
       const cartTotal = formData.get("total")?.toString() || "0";
       const discountPercentage = formData.get("discount")?.toString() || "15";
       const message = formData.get("message")?.toString() || "Hi {name}, we noticed you left some items in your cart. Complete your purchase now and enjoy {discount} off!";
+      const shopUrl = formData.get("shopUrl")?.toString() || "";
       
       console.log("📧 Form data received:", {
         cartId,
         customerEmail,
         customerName,
         cartTotal,
-        discountPercentage
+        discountPercentage,
+        shopUrl
       });
       
       // Validate email
       if (!customerEmail) {
-        console.error("❌ No email address provided");
         return new Response(JSON.stringify({
           success: false,
           message: "No email address provided"
         }), {
           status: 400,
-          headers: { "Content-Type": "application/json" }
+          headers: { 
+            "Content-Type": "application/json",
+            "X-Content-Type-Options": "nosniff"
+          }
+        });
+      }
+
+      // Validate email format
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(customerEmail)) {
+        return new Response(JSON.stringify({
+          success: false,
+          message: "Invalid email format"
+        }), {
+          status: 400,
+          headers: { 
+            "Content-Type": "application/json",
+            "X-Content-Type-Options": "nosniff"
+          }
         });
       }
 
       // Check if Resend API key exists
       const resendApiKey = process.env.RESEND_API_KEY;
-      console.log("📧 Resend API Key exists:", !!resendApiKey);
       
       if (!resendApiKey) {
-        console.error("❌ RESEND_API_KEY not found in environment variables");
         return new Response(JSON.stringify({
           success: false,
           message: "Email service not configured. Please add RESEND_API_KEY to .env file"
         }), {
           status: 500,
-          headers: { "Content-Type": "application/json" }
+          headers: { 
+            "Content-Type": "application/json",
+            "X-Content-Type-Options": "nosniff"
+          }
         });
       }
 
-      // Initialize Resend with your API key
-      const resend = new Resend(resendApiKey);
+      // Initialize Resend
+      let resend;
+      try {
+        resend = new Resend(resendApiKey);
+      } catch (initError) {
+        return new Response(JSON.stringify({
+          success: false,
+          message: "Failed to initialize email service"
+        }), {
+          status: 500,
+          headers: { 
+            "Content-Type": "application/json",
+            "X-Content-Type-Options": "nosniff"
+          }
+        });
+      }
 
       // Generate a discount code
       const discountCode = `SAVE${discountPercentage}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
@@ -186,9 +222,12 @@ export async function action({ request }: ActionFunctionArgs) {
         .replace('{name}', customerName)
         .replace('{discount}', `${discountPercentage}% off with code: ${discountCode}`);
       
-      console.log("📧 Sending real email via Resend to:", customerEmail);
+      console.log("📧 Sending email via Resend to:", customerEmail);
       
-      // Create HTML email template
+      // Build cart URL
+      const cartUrl = shopUrl ? `${shopUrl}/cart` : '#';
+      
+      // Create HTML email template with proper cart link
       const emailHtml = `
         <!DOCTYPE html>
         <html>
@@ -255,7 +294,9 @@ export async function action({ request }: ActionFunctionArgs) {
                         <table width="100%" cellpadding="0" cellspacing="0">
                           <tr>
                             <td align="center">
-                              <a href="#" style="background-color: #008060; color: white; padding: 15px 40px; text-decoration: none; border-radius: 50px; font-weight: bold; font-size: 18px; display: inline-block;">
+                              <a href="${cartUrl}" 
+                                 style="background-color: #008060; color: white; padding: 15px 40px; text-decoration: none; border-radius: 50px; font-weight: bold; font-size: 18px; display: inline-block;"
+                                 target="_blank">
                                 Complete Your Purchase
                               </a>
                             </td>
@@ -272,7 +313,7 @@ export async function action({ request }: ActionFunctionArgs) {
                     <tr>
                       <td style="background-color: #f8f9fa; padding: 20px; text-align: center; border-top: 1px solid #e4e5e7;">
                         <p style="margin: 0; color: #999; font-size: 12px;">
-                          © 2024 Your Store. All rights reserved.
+                          © 2026 Your Store. All rights reserved.
                         </p>
                         <p style="margin: 5px 0 0; color: #999; font-size: 12px;">
                           You received this email because you started a checkout at our store.
@@ -300,20 +341,27 @@ export async function action({ request }: ActionFunctionArgs) {
         Your exclusive discount code: ${discountCode} (${discountPercentage}% OFF)
         
         Complete your purchase now and save!
+        ${cartUrl}
         
         This discount code expires in 7 days.
       `;
       
       console.log("📧 Attempting to send email via Resend...");
       
-      // Send actual email using Resend
-      const { data, error } = await resend.emails.send({
+      // Send email with timeout
+      const sendPromise = resend.emails.send({
         from: 'Revenue Scanner <onboarding@resend.dev>',
         to: [customerEmail],
         subject: `Complete Your Purchase - ${discountPercentage}% Off Inside!`,
         html: emailHtml,
         text: plainText,
       });
+
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error("Email sending timeout after 10 seconds")), 10000)
+      );
+
+      const { data, error } = await Promise.race([sendPromise, timeoutPromise]) as any;
 
       if (error) {
         console.error("❌ Resend error details:", error);
@@ -323,7 +371,10 @@ export async function action({ request }: ActionFunctionArgs) {
           error: error
         }), {
           status: 500,
-          headers: { "Content-Type": "application/json" }
+          headers: { 
+            "Content-Type": "application/json",
+            "X-Content-Type-Options": "nosniff"
+          }
         });
       }
 
@@ -340,18 +391,26 @@ export async function action({ request }: ActionFunctionArgs) {
         emailId: data?.id
       }), {
         status: 200,
-        headers: { "Content-Type": "application/json" }
+        headers: { 
+          "Content-Type": "application/json",
+          "X-Content-Type-Options": "nosniff"
+        }
       });
       
     } catch (error) {
       console.error("❌ Send reminder error details:", error);
+      
+      // Always return JSON, never HTML
       return new Response(JSON.stringify({
         success: false,
         message: error instanceof Error ? error.message : "Failed to send reminder",
         error: error instanceof Error ? error.stack : String(error)
       }), {
         status: 500,
-        headers: { "Content-Type": "application/json" }
+        headers: { 
+          "Content-Type": "application/json",
+          "X-Content-Type-Options": "nosniff"
+        }
       });
     }
   }
@@ -372,13 +431,17 @@ export async function action({ request }: ActionFunctionArgs) {
           shop {
             name
             myshopifyDomain
+            primaryDomain {
+              url
+            }
           }
         }`
       );
 
       const shopData = await shopQuery.json() as any;
       const shopName = shopData.data?.shop?.name || "Your Store";
-      console.log(`✅ Shop: ${shopName}`);
+      const shopUrl = shopData.data?.shop?.primaryDomain?.url || `https://${shopData.data?.shop?.myshopifyDomain}`;
+      console.log(`✅ Shop: ${shopName}, URL: ${shopUrl}`);
 
       // ============ 2. COMPLETED ORDERS ============
       console.log("📦 Fetching completed orders...");
@@ -465,6 +528,7 @@ export async function action({ request }: ActionFunctionArgs) {
       // ============ 3. ABANDONED CHECKOUTS ============
       console.log("🛒 Fetching abandoned checkouts...");
 
+      // Fixed: Removed checkoutUrl field as it doesn't exist in the API
       const abandonedQuery = await admin.graphql(
         `#graphql
         query {
@@ -540,6 +604,7 @@ export async function action({ request }: ActionFunctionArgs) {
 
         return {
           id: node.id,
+          cartUrl: `${shopUrl}/cart`, // Construct cart URL from shop URL
           customerEmail: customer?.email || null,
           customerFirstName: customer?.firstName || null,
           customerLastName: customer?.lastName || null,
@@ -719,7 +784,7 @@ export async function action({ request }: ActionFunctionArgs) {
       let missingImages = 0;
       let missingDescriptions = 0;
       let missingTitles = 0;
-      let missingReviews = 0; // We'll assume reviews are missing for now (would need separate query)
+      let missingReviews = 0;
       
       const productsWithIssues: any[] = [];
       
@@ -732,10 +797,8 @@ export async function action({ request }: ActionFunctionArgs) {
         if (!hasDescription) missingDescriptions++;
         if (!hasTitle) missingTitles++;
         
-        // For now, assume no reviews (would need separate query)
         missingReviews += 1;
         
-        // Track products with issues for detailed view
         if (!hasImages || !hasDescription || !hasTitle) {
           productsWithIssues.push({
             id: node.id,
@@ -754,7 +817,7 @@ export async function action({ request }: ActionFunctionArgs) {
         missingDescriptions,
         missingTitles,
         missingReviews,
-        productsWithIssues: productsWithIssues.slice(0, 10) // Show only first 10 issues
+        productsWithIssues: productsWithIssues.slice(0, 10)
       };
 
       console.log("📊 Product Stats:", {
@@ -788,6 +851,7 @@ export async function action({ request }: ActionFunctionArgs) {
         scanDate: new Date().toISOString(),
         metrics: {
           shopName,
+          shopUrl,
           totalOrders: completedOrdersList.length,
           totalRevenue: Math.round(completedRevenue),
           cartAnalytics: {
@@ -1251,14 +1315,15 @@ export default function Index() {
                   border: '1px solid #E4E5E7',
                   boxShadow: '0 2px 8px rgba(0,0,0,0.05)'
                 }}>
-                  <p style={{ fontSize: '0.9rem', color: '#5C5F62', marginBottom: '0.5rem' }}>📧 Login Customer</p>
+                  <p style={{ fontSize: '0.9rem', color: '#5C5F62', marginBottom: '0.5rem' }}>📧 Customer with Email</p>
                   <p style={{ fontSize: '2.5rem', fontWeight: '700', color: '#008060' }}>
-                    {displayData.metrics.cartAnalytics.abandonedCartsList?.filter(c => c.customerEmail).length + 
-                     displayData.metrics.cartAnalytics.completedOrdersList?.filter(c => c.customerEmail).length}
+                    {displayData.metrics.cartAnalytics.abandonedCartsList?.filter(c => c.customerEmail).length}
                   </p>
                   <p style={{ color: '#5C5F62' }}>
-                    {displayData.metrics.cartAnalytics.abandonedCartsList?.filter(c => c.customerEmail).length} abandoned • 
-                    {displayData.metrics.cartAnalytics.completedOrdersList?.filter(c => c.customerEmail).length} completed
+                    ${displayData.metrics.cartAnalytics.abandonedCartsList
+                      ?.filter(c => c.customerEmail)
+                      .reduce((sum, c) => sum + c.totalPrice, 0)
+                      .toLocaleString() || 0} recoverable
                   </p>
                 </div>
                 
@@ -1269,7 +1334,7 @@ export default function Index() {
                   border: '1px solid #E4E5E7',
                   boxShadow: '0 2px 8px rgba(0,0,0,0.05)'
                 }}>
-                  <p style={{ fontSize: '0.9rem', color: '#5C5F62', marginBottom: '0.5rem' }}>👤 Guest Customer</p>
+                  <p style={{ fontSize: '0.9rem', color: '#5C5F62', marginBottom: '0.5rem' }}>👤 Guest Customers</p>
                   <p style={{ fontSize: '2.5rem', fontWeight: '700', color: '#D82C0D' }}>
                     {displayData.metrics.cartAnalytics.guestAbandonedCarts?.length || 0}
                   </p>
@@ -1295,6 +1360,7 @@ export default function Index() {
                   checkoutSteps: [],
                   dailyFunnel: []
                 }}
+                shopUrl={displayData.metrics.shopUrl}
               />
 
               {/* Product Stats Section */}

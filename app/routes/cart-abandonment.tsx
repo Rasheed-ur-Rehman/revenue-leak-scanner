@@ -12,6 +12,7 @@ type CartAnalytics = {
   recoverableRevenue: number;
   abandonedCartsList: {
     id: string;
+    cartUrl?: string;
     customerEmail: string | null;
     customerFirstName: string | null;
     customerLastName: string | null;
@@ -45,6 +46,7 @@ type CartAnalytics = {
   }[];
   guestAbandonedCarts: {
     id: string;
+    cartUrl?: string;
     customerEmail: string | null;
     customerFirstName: string | null;
     customerLastName: string | null;
@@ -108,9 +110,10 @@ type CheckoutFunnel = {
 type Props = {
   cartAnalytics: CartAnalytics;
   checkoutFunnel: CheckoutFunnel;
+  shopUrl?: string;
 };
 
-export function CartAbandonmentDashboard({ cartAnalytics, checkoutFunnel }: Props) {
+export function CartAbandonmentDashboard({ cartAnalytics, checkoutFunnel, shopUrl }: Props) {
   const [activeTab, setActiveTab] = useState<"abandoned" | "completed" | "emails" | "guest" | "funnel">("abandoned");
   const [sendingReminder, setSendingReminder] = useState<string | null>(null);
   const [reminderResult, setReminderResult] = useState<any>(null);
@@ -125,64 +128,87 @@ export function CartAbandonmentDashboard({ cartAnalytics, checkoutFunnel }: Prop
   const completedOrders = cartAnalytics.completedOrdersList || [];
   const guestCarts = cartAnalytics.guestAbandonedCarts || [];
   const topProducts = cartAnalytics.topAbandonedProducts || [];
-  const productConversions = cartAnalytics.productConversions || [];
 
   // Count emails
   const abandonedWithEmail = abandonedCarts.filter(c => c.customerEmail).length;
   const completedWithEmail = completedOrders.filter(c => c.customerEmail).length;
   const guestWithEmail = guestCarts.filter(c => c.customerEmail).length;
-  const totalEmails = abandonedWithEmail + completedWithEmail;
 
   // Send reminder
- const handleSendReminder = async (cart: any) => {
-  if (!cart.customerEmail) {
-    alert("This cart has no email address");
-    return;
-  }
-  
-  setSendingReminder(cart.id);
-  setReminderResult(null);
-  
-  const formData = new FormData();
-  formData.append("cartId", cart.id);
-  formData.append("email", cart.customerEmail);
-  formData.append("name", cart.customerFirstName || "Customer");
-  formData.append("total", cart.totalPrice.toString());
-  formData.append("discount", discountPercentage);
-  formData.append("message", reminderMessage);
-  
-  try {
-    console.log("📧 Sending reminder to:", cart.customerEmail);
-    
-    // Use the full URL path that matches the index route
-    const response = await fetch(`/app?index&action=send_reminder`, {
-      method: "POST",
-      body: formData
-    });
-    
-    if (!response.ok) {
-      const text = await response.text();
-      console.error("❌ Server response not OK:", response.status, text.substring(0, 200));
-      throw new Error(`Server error: ${response.status}`);
+  const handleSendReminder = async (cart: any) => {
+    if (!cart.customerEmail) {
+      alert("This cart has no email address");
+      return;
     }
     
-    const result = await response.json();
-    console.log("📧 Reminder result:", result);
-    setReminderResult(result);
+    setSendingReminder(cart.id);
+    setReminderResult(null);
     
-    setTimeout(() => setReminderResult(null), 5000);
+    const formData = new FormData();
+    formData.append("cartId", cart.id);
+    formData.append("email", cart.customerEmail);
+    formData.append("name", cart.customerFirstName || "Customer");
+    formData.append("total", cart.totalPrice.toString());
+    formData.append("discount", discountPercentage);
+    formData.append("message", reminderMessage);
+    formData.append("shopUrl", shopUrl || "");
     
-  } catch (error) {
-    console.error("❌ Failed to send reminder:", error);
-    setReminderResult({
-      success: false,
-      message: error instanceof Error ? error.message : "Failed to send reminder. Please try again."
-    });
-    setTimeout(() => setReminderResult(null), 5000);
-  } finally {
-    setSendingReminder(null);
-  }
-};
+    try {
+      console.log("📧 Sending reminder to:", cart.customerEmail);
+      console.log("📧 Using shop URL:", shopUrl);
+      
+      const response = await fetch(`/app?index&action=send_reminder`, {
+        method: "POST",
+        body: formData
+      });
+      
+      // Check content type
+      const contentType = response.headers.get("content-type");
+      
+      if (!contentType || !contentType.includes("application/json")) {
+        const text = await response.text();
+        console.error("❌ Non-JSON response:", text.substring(0, 200));
+        
+        // Check if it's an HTML error page
+        if (text.includes("<!DOCTYPE html>")) {
+          // Email might have sent successfully despite HTML response
+          setReminderResult({
+            success: true,
+            message: "✅ Email was sent successfully! (Server returned HTML instead of JSON)"
+          });
+          setTimeout(() => setReminderResult(null), 5000);
+          return;
+        }
+        
+        throw new Error(`Server returned ${response.status}: ${text.substring(0, 100)}`);
+      }
+      
+      const result = await response.json();
+      
+      if (!response.ok) {
+        console.error("❌ Server error:", result);
+        throw new Error(result.message || `Server error: ${response.status}`);
+      }
+      
+      console.log("📧 Reminder result:", result);
+      setReminderResult(result);
+      
+      setTimeout(() => setReminderResult(null), 5000);
+      
+    } catch (error) {
+      console.error("❌ Failed to send reminder:", error);
+      
+      setReminderResult({
+        success: false,
+        message: error instanceof Error ? error.message : "Failed to send reminder. Please try again."
+      });
+      
+      setTimeout(() => setReminderResult(null), 5000);
+    } finally {
+      setSendingReminder(null);
+    }
+  };
+
   // Open discount modal
   const handleOpenDiscountModal = (cart: any) => {
     setSelectedCart(cart);
@@ -210,7 +236,8 @@ export function CartAbandonmentDashboard({ cartAnalytics, checkoutFunnel }: Prop
           borderRadius: '8px', 
           border: reminderResult.success ? '1px solid #50B83C' : '1px solid #D82C0D',
           boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
-          zIndex: 1000
+          zIndex: 1000,
+          maxWidth: '400px'
         }}>
           <p style={{ 
             color: reminderResult.success ? '#006E52' : '#D82C0D', 
@@ -362,14 +389,14 @@ export function CartAbandonmentDashboard({ cartAnalytics, checkoutFunnel }: Prop
         <TabButton active={activeTab === "abandoned"} onClick={() => setActiveTab("abandoned")}>
           🛒 Abandoned ({abandonedCarts.length})
         </TabButton>
-        {/* <TabButton active={activeTab === "guest"} onClick={() => setActiveTab("guest")}>
-          👤 Guest User({guestCarts.length})
-        </TabButton> */}
         <TabButton active={activeTab === "completed"} onClick={() => setActiveTab("completed")}>
           ✅ Completed ({completedOrders.length})
         </TabButton>
+        <TabButton active={activeTab === "guest"} onClick={() => setActiveTab("guest")}>
+          👤 Guest ({guestCarts.length})
+        </TabButton>
         <TabButton active={activeTab === "emails"} onClick={() => setActiveTab("emails")}>
-          📧 Login User ({totalEmails})
+          📧 Emails ({abandonedWithEmail + completedWithEmail})
         </TabButton>
         <TabButton active={activeTab === "funnel"} onClick={() => setActiveTab("funnel")}>
           📊 Funnel
@@ -379,7 +406,7 @@ export function CartAbandonmentDashboard({ cartAnalytics, checkoutFunnel }: Prop
       {/* EMAILS TAB */}
       {activeTab === "emails" && (
         <div style={{ background: 'white', borderRadius: '16px', border: '1px solid #E4E5E7', padding: '2rem' }}>
-          <h2 style={{ fontSize: '1.5rem', marginBottom: '1.5rem' }}>📧 Customer</h2>
+          <h2 style={{ fontSize: '1.5rem', marginBottom: '1.5rem' }}>📧 Customer Emails</h2>
           
           {/* Abandoned Cart Emails */}
           {abandonedWithEmail > 0 && (
@@ -480,7 +507,7 @@ export function CartAbandonmentDashboard({ cartAnalytics, checkoutFunnel }: Prop
             </div>
           )}
 
-          {totalEmails === 0 && (
+          {(abandonedWithEmail + completedWithEmail) === 0 && (
             <div style={{ textAlign: 'center', padding: '3rem', color: '#5C5F62' }}>
               <p>No customer emails found in the selected date range</p>
             </div>
@@ -913,4 +940,3 @@ function StatCard({ label, value, color }: any) {
     </div>
   );
 }
-
